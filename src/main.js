@@ -893,13 +893,30 @@ configureTransformControlsVisuals();
 let isTransformDragging = false;
 let isPointerOverGizmo = false;
 let selectedPointIndex = -1;
+let transformDragStartPoint = null;
 transformControls.addEventListener('dragging-changed', (event) => {
   isTransformDragging = Boolean(event.value);
   controls.enabled = !event.value;
   if (event.value) {
     pointerDown = null;
+    if (selectedPointIndex >= 0 && selectedPointIndex < userPoints.length) {
+      transformDragStartPoint = userPoints[selectedPointIndex].clone();
+    } else {
+      transformDragStartPoint = null;
+    }
   } else {
     scheduleRebuild();
+    if (
+      transformDragStartPoint instanceof THREE.Vector3 &&
+      selectedPointIndex >= 0 &&
+      selectedPointIndex < userPoints.length
+    ) {
+      const movedPoint = userPoints[selectedPointIndex];
+      if (movedPoint.distanceToSquared(transformDragStartPoint) > 1e-12) {
+        pushUndoState();
+      }
+    }
+    transformDragStartPoint = null;
   }
 });
 transformControls.addEventListener('hoveron', () => {
@@ -1151,6 +1168,162 @@ function regenerateGeneratedPoints() {
 function syncPointCount() {
   settings.pointCount = userPoints.length + generatedPoints.length;
   updatePointCountLabel();
+}
+
+const undoStack = [];
+const redoStack = [];
+const HISTORY_MAX_ENTRIES = 200;
+let applyingHistoryState = false;
+
+function cloneHistoryState(state) {
+  return {
+    userPoints: state.userPoints.map((point) => [point[0], point[1], point[2]]),
+    cutPlanes: state.cutPlanes.map((cut) => ({
+      normal: [cut.normal[0], cut.normal[1], cut.normal[2]],
+      constant: cut.constant,
+      keepSign: cut.keepSign,
+    })),
+  };
+}
+
+function captureHistoryState() {
+  return {
+    userPoints: userPoints.map((point) => [point.x, point.y, point.z]),
+    cutPlanes: activeCutPlanes.map((cut) => ({
+      normal: [cut.plane.normal.x, cut.plane.normal.y, cut.plane.normal.z],
+      constant: cut.plane.constant,
+      keepSign: cut.keepSign,
+    })),
+  };
+}
+
+function historyStatesEqual(a, b) {
+  if (a.userPoints.length !== b.userPoints.length || a.cutPlanes.length !== b.cutPlanes.length) {
+    return false;
+  }
+
+  for (let i = 0; i < a.userPoints.length; i += 1) {
+    const pa = a.userPoints[i];
+    const pb = b.userPoints[i];
+    if (Math.abs(pa[0] - pb[0]) > 1e-9 || Math.abs(pa[1] - pb[1]) > 1e-9 || Math.abs(pa[2] - pb[2]) > 1e-9) {
+      return false;
+    }
+  }
+
+  for (let i = 0; i < a.cutPlanes.length; i += 1) {
+    const ca = a.cutPlanes[i];
+    const cb = b.cutPlanes[i];
+    if (
+      Math.abs(ca.normal[0] - cb.normal[0]) > 1e-9 ||
+      Math.abs(ca.normal[1] - cb.normal[1]) > 1e-9 ||
+      Math.abs(ca.normal[2] - cb.normal[2]) > 1e-9 ||
+      Math.abs(ca.constant - cb.constant) > 1e-9 ||
+      ca.keepSign !== cb.keepSign
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function pushUndoState() {
+  if (applyingHistoryState) {
+    return;
+  }
+
+  const next = captureHistoryState();
+  const last = undoStack.length > 0 ? undoStack[undoStack.length - 1] : null;
+  if (last && historyStatesEqual(last, next)) {
+    return;
+  }
+
+  undoStack.push(next);
+  if (undoStack.length > HISTORY_MAX_ENTRIES) {
+    undoStack.shift();
+  }
+  redoStack.length = 0;
+}
+
+function applyHistoryState(state) {
+  applyingHistoryState = true;
+  try {
+    clearPointSelection();
+
+    userPoints.length = 0;
+    pointGroup.clear();
+    for (let i = 0; i < state.userPoints.length; i += 1) {
+      const pointData = state.userPoints[i];
+      const point = new THREE.Vector3(pointData[0], pointData[1], pointData[2]);
+      clampPointToVolumeBounds(point, bounds, 0);
+      userPoints.push(point);
+
+      const marker = new THREE.Mesh(pointGeometry, pointMaterial);
+      marker.position.copy(point);
+      marker.userData.pointIndex = i;
+      pointGroup.add(marker);
+    }
+
+    activeCutPlanes.length = 0;
+    for (let i = 0; i < state.cutPlanes.length; i += 1) {
+      const cutData = state.cutPlanes[i];
+      const plane = new THREE.Plane(
+        new THREE.Vector3(cutData.normal[0], cutData.normal[1], cutData.normal[2]),
+        cutData.constant,
+      );
+      activeCutPlanes.push({
+        plane,
+        keepSign: cutData.keepSign,
+      });
+    }
+
+    cutGesture = null;
+    clearCutPreviewLine();
+    refreshPointMarkerMaterials();
+    syncPointCount();
+
+    if (simulationState.running) {
+      rebuildSimulationEntries();
+      applySimulationAtCurrentElapsed();
+      updateSimulationTimelineUi();
+    } else {
+      invalidateSimulationSession();
+    }
+
+    rebuildNow();
+  } finally {
+    applyingHistoryState = false;
+  }
+}
+
+function undoHistory() {
+  if (undoStack.length <= 1) {
+    return;
+  }
+
+  const current = undoStack.pop();
+  if (current) {
+    redoStack.push(cloneHistoryState(current));
+  }
+
+  const previous = undoStack[undoStack.length - 1];
+  if (!previous) {
+    return;
+  }
+  applyHistoryState(previous);
+}
+
+function redoHistory() {
+  if (redoStack.length === 0) {
+    return;
+  }
+
+  const next = redoStack.pop();
+  if (!next) {
+    return;
+  }
+  undoStack.push(cloneHistoryState(next));
+  applyHistoryState(next);
 }
 
 function applyGridSizeSettings({ regenerateRandom = true } = {}) {
@@ -2258,13 +2431,18 @@ ui.clearAll.addEventListener('click', () => {
   updateRangeProgress(ui.randomPoints);
   syncPointCount();
   scheduleRebuild();
+  pushUndoState();
 });
 
 ui.clearCuts.addEventListener('click', () => {
+  if (activeCutPlanes.length === 0) {
+    return;
+  }
   activeCutPlanes.length = 0;
   cutGesture = null;
   clearCutPreviewLine();
   rebuildNow();
+  pushUndoState();
 });
 
 ui.showBoundary.addEventListener('change', () => {
@@ -2407,6 +2585,7 @@ function endCutGesture(event, cancelled = false) {
     if (nextCutPlane) {
       activeCutPlanes.push(nextCutPlane);
       rebuildNow();
+      pushUndoState();
     }
   }
 
@@ -2439,6 +2618,7 @@ function addPointFromEvent(event) {
   syncPointCount();
   selectPointByIndex(userPoints.length - 1);
   scheduleRebuild();
+  pushUndoState();
   return true;
 }
 
@@ -2468,6 +2648,7 @@ function removePointAtIndex(index) {
   }
 
   scheduleRebuild();
+  pushUndoState();
   return true;
 }
 
@@ -2619,10 +2800,6 @@ window.addEventListener('keydown', (event) => {
     return;
   }
 
-  if (event.key !== 'Delete') {
-    return;
-  }
-
   const activeElement = document.activeElement;
   if (
     activeElement instanceof HTMLInputElement ||
@@ -2630,6 +2807,25 @@ window.addEventListener('keydown', (event) => {
     activeElement instanceof HTMLSelectElement ||
     activeElement?.isContentEditable
   ) {
+    return;
+  }
+
+  const key = event.key.toLowerCase();
+  const useHistoryModifier = event.ctrlKey || event.metaKey;
+  const isUndo = useHistoryModifier && !event.shiftKey && key === 'z';
+  const isRedo = (useHistoryModifier && key === 'y') || (useHistoryModifier && event.shiftKey && key === 'z');
+  if (isUndo) {
+    event.preventDefault();
+    undoHistory();
+    return;
+  }
+  if (isRedo) {
+    event.preventDefault();
+    redoHistory();
+    return;
+  }
+
+  if (event.key !== 'Delete') {
     return;
   }
 
@@ -2683,6 +2879,7 @@ setPointEditingLocked(false);
 renderLoop();
 rebuildIsosurfaces();
 clampPanelToViewport();
+pushUndoState();
 
 window.addEventListener('beforeunload', () => {
   if (animationFrame) {
