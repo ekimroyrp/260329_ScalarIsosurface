@@ -12,6 +12,7 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader.js';
 import { generateIsosurfaces } from './isosurface/marchingCubes.js';
 import { subdivideCatmullClark } from './geometry/catmullClarkSubdivision.js';
+import { laplacianSmooth } from './geometry/laplacianSmoothing.js';
 
 const ISOSURFACE_VERTEX_SHADER = `
   varying vec3 vWorldPos;
@@ -171,6 +172,14 @@ function buildControlPanel(initial) {
             </div>
             <input type="range" id="subdivision" min="0" max="2" step="1" value="${initial.subdivision}" />
           </label>
+
+          <label class="control">
+            <div class="control-row">
+              <span>Smoothing</span>
+              <span id="smoothing-value">${initial.smoothing}</span>
+            </div>
+            <input type="range" id="smoothing" min="0" max="3" step="1" value="${initial.smoothing}" />
+          </label>
         </div>
       </section>
 
@@ -270,6 +279,7 @@ function buildControlPanel(initial) {
     amount: requireIn(panel, '#amount'),
     offset: requireIn(panel, '#offset'),
     subdivision: requireIn(panel, '#subdivision'),
+    smoothing: requireIn(panel, '#smoothing'),
     xResValue: requireIn(panel, '#x-res-value'),
     yResValue: requireIn(panel, '#y-res-value'),
     zResValue: requireIn(panel, '#z-res-value'),
@@ -277,6 +287,7 @@ function buildControlPanel(initial) {
     amountValue: requireIn(panel, '#amount-value'),
     offsetValue: requireIn(panel, '#offset-value'),
     subdivisionValue: requireIn(panel, '#subdivision-value'),
+    smoothingValue: requireIn(panel, '#smoothing-value'),
     pointCountValue: requireIn(panel, '#point-count-value'),
     gradientStart: requireIn(panel, '#gradient-start-color'),
     gradientEnd: requireIn(panel, '#gradient-end-color'),
@@ -323,6 +334,7 @@ const settings = {
   amount: 1,
   offset: 0.08,
   subdivision: 0,
+  smoothing: 0,
   gradientStart: '#7eafd0',
   gradientEnd: '#7ce7de',
   fresnel: 0.48,
@@ -577,6 +589,8 @@ const mouse = new THREE.Vector2();
 let pointerDown = null;
 const clickMoveThresholdSq = 16;
 const sigma = 0.22;
+const SMOOTHING_VERTEX_LIMIT = 120000;
+const SMOOTHING_VERTEX_ITERATION_BUDGET = 240000;
 let rebuildTimer = null;
 
 function updatePointCountLabel() {
@@ -617,6 +631,26 @@ function applyMaterialSettingsToMeshes() {
   }
 }
 
+function getEffectiveSmoothingIterations(geometry, requestedIterations) {
+  const requested = Math.max(0, Math.floor(requestedIterations));
+  if (requested === 0) {
+    return 0;
+  }
+
+  const position = geometry.getAttribute('position');
+  const vertexCount = position ? position.count : 0;
+  if (vertexCount <= 0 || vertexCount > SMOOTHING_VERTEX_LIMIT) {
+    return 0;
+  }
+
+  const byBudget = Math.floor(SMOOTHING_VERTEX_ITERATION_BUDGET / vertexCount);
+  if (byBudget <= 0) {
+    return 0;
+  }
+
+  return Math.min(requested, byBudget);
+}
+
 function rebuildIsosurfaces() {
   clearIsosurfaceMeshes();
 
@@ -641,6 +675,15 @@ function rebuildIsosurfaces() {
       if (subdivided !== renderGeometry) {
         renderGeometry.dispose();
         renderGeometry = subdivided;
+      }
+    }
+    const smoothingIterations =
+      settings.subdivision > 0 ? getEffectiveSmoothingIterations(renderGeometry, settings.smoothing) : 0;
+    if (smoothingIterations > 0) {
+      const smoothed = laplacianSmooth(renderGeometry, smoothingIterations, 0.5);
+      if (smoothed !== renderGeometry) {
+        renderGeometry.dispose();
+        renderGeometry = smoothed;
       }
     }
 
@@ -861,6 +904,17 @@ bindRange(ui.subdivision, ui.subdivisionValue, (value) => `${Math.round(value)}`
   settings.subdivision = Math.round(value);
   scheduleRebuild();
 });
+
+const updateSmoothingUi = () => {
+  const value = Math.round(Number.parseFloat(ui.smoothing.value));
+  settings.smoothing = value;
+  ui.smoothingValue.textContent = `${value}`;
+  updateRangeProgress(ui.smoothing);
+};
+ui.smoothing.addEventListener('input', updateSmoothingUi);
+ui.smoothing.addEventListener('change', scheduleRebuild);
+ui.smoothing.addEventListener('pointerup', scheduleRebuild);
+updateSmoothingUi();
 
 bindRange(ui.fresnel, ui.fresnelValue, (value) => `${value.toFixed(2)}`, (value) => {
   settings.fresnel = value;
