@@ -1,0 +1,18 @@
+{
+  "name": "260329_scalarisosurface",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "lil-gui": "^0.20.0",
+    "three": "^0.181.1"
+  },
+  "devDependencies": {
+    "vite": "^7.2.0"
+  }
+}
