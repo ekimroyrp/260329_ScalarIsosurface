@@ -589,9 +589,17 @@ input[type="range"]::-moz-range-thumb {
 
 .toggle-control {
   display: flex;
+  flex-direction: row;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 10px;
+}
+
+.toggle-control-stacked {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 6px;
 }
 
 .toggle-control > span {

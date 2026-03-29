@@ -172,6 +172,72 @@ function buildControlPanel(initial) {
             </div>
             <input type="range" id="z-res" min="8" max="48" step="1" value="${initial.zRes}" />
           </label>
+
+          <label class="toggle-control toggle-control-stacked" for="show-boundary">
+            <span>Show Boundary</span>
+            <input type="checkbox" id="show-boundary" checked />
+          </label>
+        </div>
+      </section>
+
+      <section class="panel-section">
+        <div class="panel-section-header">
+          <span class="panel-section-label">Points</span>
+        </div>
+        <div class="panel-section-content panel-controls-stack">
+          <div class="control-hint">LMB = Add Custom Point</div>
+          <button type="button" id="clear-all" class="pill-button control-button-wide">Clear Custom Points</button>
+
+          <label class="control">
+            <div class="control-row">
+              <span>Random Points</span>
+              <input
+                type="number"
+                id="random-points-value"
+                class="value-editor"
+                min="0"
+                max="200"
+                step="1"
+                value="${initial.randomPoints}"
+              />
+            </div>
+            <input
+              type="range"
+              id="random-points"
+              min="0"
+              max="200"
+              step="1"
+              value="${initial.randomPoints}"
+            />
+          </label>
+
+          <label class="control">
+            <div class="control-row">
+              <span>Random Seed</span>
+              <input
+                type="number"
+                id="random-seed-value"
+                class="value-editor"
+                min="0"
+                max="9999"
+                step="1"
+                value="${initial.randomSeed}"
+              />
+            </div>
+            <input
+              type="range"
+              id="random-seed"
+              min="0"
+              max="9999"
+              step="1"
+              value="${initial.randomSeed}"
+            />
+          </label>
+
+          <label class="toggle-control toggle-control-stacked" for="show-points">
+            <span>Show Points</span>
+            <input type="checkbox" id="show-points" checked />
+          </label>
         </div>
       </section>
 
@@ -181,6 +247,7 @@ function buildControlPanel(initial) {
         </div>
         <div class="panel-section-content panel-controls-stack">
           <div class="control-hint">Shift+LMB = Cut IsoSurface</div>
+          <button type="button" id="clear-cuts" class="pill-button control-button-wide">Clear IsoSurface Cuts</button>
           <label class="control">
             <div class="control-row">
               <span>IsoValue</span>
@@ -268,61 +335,10 @@ function buildControlPanel(initial) {
             </div>
             <input type="range" id="thickness" min="0" max="0.2" step="0.005" value="${initial.thickness}" />
           </label>
-        </div>
-      </section>
 
-      <section class="panel-section">
-        <div class="panel-section-header">
-          <span class="panel-section-label">Points</span>
-        </div>
-        <div class="panel-section-content panel-controls-stack">
-          <div class="control-hint">LMB = Add Custom Point</div>
-          <button type="button" id="clear-all" class="pill-button control-button-wide">Delete Custom Points</button>
-
-          <label class="control">
-            <div class="control-row">
-              <span>Random Points</span>
-              <input
-                type="number"
-                id="random-points-value"
-                class="value-editor"
-                min="0"
-                max="200"
-                step="1"
-                value="${initial.randomPoints}"
-              />
-            </div>
-            <input
-              type="range"
-              id="random-points"
-              min="0"
-              max="200"
-              step="1"
-              value="${initial.randomPoints}"
-            />
-          </label>
-
-          <label class="control">
-            <div class="control-row">
-              <span>Random Seed</span>
-              <input
-                type="number"
-                id="random-seed-value"
-                class="value-editor"
-                min="0"
-                max="9999"
-                step="1"
-                value="${initial.randomSeed}"
-              />
-            </div>
-            <input
-              type="range"
-              id="random-seed"
-              min="0"
-              max="9999"
-              step="1"
-              value="${initial.randomSeed}"
-            />
+          <label class="toggle-control toggle-control-stacked" for="show-isosurface">
+            <span>Show IsoSurface</span>
+            <input type="checkbox" id="show-isosurface" checked />
           </label>
         </div>
       </section>
@@ -439,8 +455,12 @@ function buildControlPanel(initial) {
     subdivision: requireIn(panel, '#subdivision'),
     smoothing: requireIn(panel, '#smoothing'),
     thickness: requireIn(panel, '#thickness'),
+    showBoundary: requireIn(panel, '#show-boundary'),
+    showIsoSurface: requireIn(panel, '#show-isosurface'),
+    clearCuts: requireIn(panel, '#clear-cuts'),
     randomPoints: requireIn(panel, '#random-points'),
     randomSeed: requireIn(panel, '#random-seed'),
+    showPoints: requireIn(panel, '#show-points'),
     xResValue: requireIn(panel, '#x-res-value'),
     yResValue: requireIn(panel, '#y-res-value'),
     zResValue: requireIn(panel, '#z-res-value'),
@@ -2082,6 +2102,30 @@ ui.clearAll.addEventListener('click', () => {
   updateRangeProgress(ui.randomPoints);
   syncPointCount();
   scheduleRebuild();
+});
+
+ui.clearCuts.addEventListener('click', () => {
+  activeCutPlanes.length = 0;
+  cutGesture = null;
+  clearCutPreviewLine();
+  rebuildNow();
+});
+
+ui.showBoundary.addEventListener('change', () => {
+  boxEdges.visible = ui.showBoundary.checked;
+});
+
+ui.showIsoSurface.addEventListener('change', () => {
+  isoGroup.visible = ui.showIsoSurface.checked;
+});
+
+ui.showPoints.addEventListener('change', () => {
+  const visible = ui.showPoints.checked;
+  pointGroup.visible = visible;
+  generatedPointGroup.visible = visible;
+  if (!visible) {
+    clearPointSelection();
+  }
 });
 
 ui.exportObj.addEventListener('click', exportIsosurfacesAsObj);
