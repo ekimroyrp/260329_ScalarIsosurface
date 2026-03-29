@@ -44,6 +44,32 @@ export function sampleScalar(position, points, sigma) {
   return value;
 }
 
+function sampleScalarAndGradient(x, y, z, points, invSigmaSq, invTwoSigmaSq, out) {
+  let value = 0;
+  let gx = 0;
+  let gy = 0;
+  let gz = 0;
+
+  for (let i = 0; i < points.length; i += 1) {
+    const point = points[i];
+    const dx = x - point.x;
+    const dy = y - point.y;
+    const dz = z - point.z;
+    const weight = Math.exp(-(dx * dx + dy * dy + dz * dz) * invTwoSigmaSq);
+    value += weight;
+
+    const gradScale = -weight * invSigmaSq;
+    gx += gradScale * dx;
+    gy += gradScale * dy;
+    gz += gradScale * dz;
+  }
+
+  out.value = value;
+  out.gx = gx;
+  out.gy = gy;
+  out.gz = gz;
+}
+
 function interpolateEdge(
   target,
   edgeOffset,
@@ -113,86 +139,10 @@ function buildScalarField(bounds, resolution, points, sigma) {
   };
 }
 
-class MinHeap {
-  constructor() {
-    this.ids = [];
-    this.priorities = [];
-  }
-
-  get size() {
-    return this.ids.length;
-  }
-
-  push(id, priority) {
-    let index = this.ids.length;
-    this.ids.push(id);
-    this.priorities.push(priority);
-
-    while (index > 0) {
-      const parent = Math.floor((index - 1) / 2);
-      if (this.priorities[parent] <= this.priorities[index]) {
-        break;
-      }
-
-      [this.ids[parent], this.ids[index]] = [this.ids[index], this.ids[parent]];
-      [this.priorities[parent], this.priorities[index]] = [
-        this.priorities[index],
-        this.priorities[parent],
-      ];
-      index = parent;
-    }
-  }
-
-  pop() {
-    if (this.ids.length === 0) {
-      return null;
-    }
-
-    const rootId = this.ids[0];
-    const rootPriority = this.priorities[0];
-    const lastIndex = this.ids.length - 1;
-
-    if (lastIndex === 0) {
-      this.ids.pop();
-      this.priorities.pop();
-      return { id: rootId, priority: rootPriority };
-    }
-
-    this.ids[0] = this.ids[lastIndex];
-    this.priorities[0] = this.priorities[lastIndex];
-    this.ids.pop();
-    this.priorities.pop();
-
-    let index = 0;
-    const length = this.ids.length;
-    while (true) {
-      const left = index * 2 + 1;
-      const right = left + 1;
-      let smallest = index;
-
-      if (left < length && this.priorities[left] < this.priorities[smallest]) {
-        smallest = left;
-      }
-      if (right < length && this.priorities[right] < this.priorities[smallest]) {
-        smallest = right;
-      }
-      if (smallest === index) {
-        break;
-      }
-
-      [this.ids[smallest], this.ids[index]] = [this.ids[index], this.ids[smallest]];
-      [this.priorities[smallest], this.priorities[index]] = [
-        this.priorities[index],
-        this.priorities[smallest],
-      ];
-      index = smallest;
-    }
-
-    return { id: rootId, priority: rootPriority };
-  }
-}
-
 function buildSignedDistanceField({
+  bounds,
+  points,
+  sigma,
   scalarField,
   nx,
   ny,
@@ -203,133 +153,82 @@ function buildSignedDistanceField({
   baseIsoValue,
 }) {
   const nodeCount = scalarField.length;
-  const insideMask = new Uint8Array(nodeCount);
-  for (let i = 0; i < nodeCount; i += 1) {
-    insideMask[i] = scalarField[i] >= baseIsoValue ? 1 : 0;
-  }
-
-  const distances = new Float32Array(nodeCount);
-  distances.fill(Number.POSITIVE_INFINITY);
-
+  const signedDistanceField = new Float32Array(nodeCount);
   const fieldIndex = (ix, iy, iz) => ix + nx * (iy + ny * iz);
-  const heap = new MinHeap();
-  const neighborDirs = [
-    [1, 0, 0],
-    [-1, 0, 0],
-    [0, 1, 0],
-    [0, -1, 0],
-    [0, 0, 1],
-    [0, 0, -1],
-  ];
-  const allNeighborDirs = [];
-  for (let dz = -1; dz <= 1; dz += 1) {
-    for (let dy = -1; dy <= 1; dy += 1) {
-      for (let dx = -1; dx <= 1; dx += 1) {
-        if (dx === 0 && dy === 0 && dz === 0) {
-          continue;
-        }
-        allNeighborDirs.push({
-          dx,
-          dy,
-          dz,
-          cost: Math.hypot(dx * stepX, dy * stepY, dz * stepZ),
-        });
-      }
-    }
-  }
-  const eps = 1e-9;
+
+  const minX = bounds.min.x;
+  const minY = bounds.min.y;
+  const minZ = bounds.min.z;
+
+  const invSigmaSq = 1 / (sigma * sigma);
+  const invTwoSigmaSq = 0.5 * invSigmaSq;
+  const maxIterations = 6;
+  const levelTolerance = 1e-4;
+  const gradSqEpsilon = 1e-12;
+  const maxStepDistance = Math.max(stepX, stepY, stepZ) * 3;
+  const evalResult = { value: 0, gx: 0, gy: 0, gz: 0 };
 
   for (let iz = 0; iz < nz; iz += 1) {
+    const z = minZ + iz * stepZ;
     for (let iy = 0; iy < ny; iy += 1) {
+      const y = minY + iy * stepY;
       for (let ix = 0; ix < nx; ix += 1) {
-        const centerIndex = fieldIndex(ix, iy, iz);
-        const centerValue = scalarField[centerIndex];
-        const centerInside = insideMask[centerIndex];
-        let seedDistance = Number.POSITIVE_INFINITY;
+        const x = minX + ix * stepX;
+        const nodeIndex = fieldIndex(ix, iy, iz);
+        const initialLevel = scalarField[nodeIndex] - baseIsoValue;
+        const sign = initialLevel >= 0 ? 1 : -1;
 
-        for (let d = 0; d < neighborDirs.length; d += 1) {
-          const [dx, dy, dz] = neighborDirs[d];
-          const nxp = ix + dx;
-          const nyp = iy + dy;
-          const nzp = iz + dz;
+        let qx = x;
+        let qy = y;
+        let qz = z;
+        let converged = false;
+        let firstGradSq = 0;
 
-          if (nxp < 0 || nxp >= nx || nyp < 0 || nyp >= ny || nzp < 0 || nzp >= nz) {
-            continue;
+        for (let iter = 0; iter < maxIterations; iter += 1) {
+          sampleScalarAndGradient(qx, qy, qz, points, invSigmaSq, invTwoSigmaSq, evalResult);
+          const level = evalResult.value - baseIsoValue;
+          const gradSq =
+            evalResult.gx * evalResult.gx +
+            evalResult.gy * evalResult.gy +
+            evalResult.gz * evalResult.gz;
+
+          if (iter === 0) {
+            firstGradSq = gradSq;
           }
 
-          const neighborIndex = fieldIndex(nxp, nyp, nzp);
-          if (insideMask[neighborIndex] === centerInside) {
-            continue;
+          if (Math.abs(level) < levelTolerance) {
+            converged = true;
+            break;
           }
 
-          const neighborValue = scalarField[neighborIndex];
-          const denom = neighborValue - centerValue;
-          const edgeLength =
-            dx !== 0 ? stepX : dy !== 0 ? stepY : stepZ;
-          let t = 0.5;
-          if (Math.abs(denom) > eps) {
-            t = (baseIsoValue - centerValue) / denom;
+          if (gradSq < gradSqEpsilon) {
+            break;
           }
-          const candidate = Math.max(0, Math.min(1, t)) * edgeLength;
-          if (candidate < seedDistance) {
-            seedDistance = candidate;
+
+          let stepScale = level / gradSq;
+          const stepLength = Math.sqrt(gradSq) * Math.abs(stepScale);
+          if (stepLength > maxStepDistance) {
+            stepScale *= maxStepDistance / stepLength;
           }
+
+          qx -= stepScale * evalResult.gx;
+          qy -= stepScale * evalResult.gy;
+          qz -= stepScale * evalResult.gz;
         }
 
-        if (Number.isFinite(seedDistance)) {
-          distances[centerIndex] = seedDistance;
-          heap.push(centerIndex, seedDistance);
+        const dx = qx - x;
+        const dy = qy - y;
+        const dz = qz - z;
+        let distance = Math.hypot(dx, dy, dz);
+
+        if (!converged || !Number.isFinite(distance)) {
+          const gradMag = Math.sqrt(Math.max(firstGradSq, gradSqEpsilon));
+          distance = Math.abs(initialLevel) / gradMag;
         }
+
+        signedDistanceField[nodeIndex] = sign * distance;
       }
     }
-  }
-
-  while (heap.size > 0) {
-    const current = heap.pop();
-    if (current === null) {
-      break;
-    }
-
-    const { id, priority } = current;
-    if (priority > distances[id] + eps) {
-      continue;
-    }
-
-    const plane = nx * ny;
-    const iz = Math.floor(id / plane);
-    const rem = id - iz * plane;
-    const iy = Math.floor(rem / nx);
-    const ix = rem - iy * nx;
-
-    for (let i = 0; i < allNeighborDirs.length; i += 1) {
-      const neighbor = allNeighborDirs[i];
-      const nxp = ix + neighbor.dx;
-      const nyp = iy + neighbor.dy;
-      const nzp = iz + neighbor.dz;
-
-      if (nxp < 0 || nxp >= nx || nyp < 0 || nyp >= ny || nzp < 0 || nzp >= nz) {
-        continue;
-      }
-
-      const neighborIndex = fieldIndex(nxp, nyp, nzp);
-      const nextDistance = priority + neighbor.cost;
-      if (nextDistance + eps < distances[neighborIndex]) {
-        distances[neighborIndex] = nextDistance;
-        heap.push(neighborIndex, nextDistance);
-      }
-    }
-  }
-
-  const signedDistanceField = new Float32Array(nodeCount);
-  const fallbackDistance = Math.hypot(
-    (nx - 1) * stepX,
-    (ny - 1) * stepY,
-    (nz - 1) * stepZ,
-  );
-
-  for (let i = 0; i < nodeCount; i += 1) {
-    const d = Number.isFinite(distances[i]) ? distances[i] : fallbackDistance;
-    signedDistanceField[i] = insideMask[i] === 1 ? d : -d;
   }
 
   return signedDistanceField;
@@ -480,6 +379,9 @@ export function generateIsosurfaces({
   const isoOffset = Number(offset);
   const scalarData = buildScalarField(bounds, resolution, points, sigma);
   const distanceField = buildSignedDistanceField({
+    bounds,
+    points,
+    sigma,
     scalarField: scalarData.scalarField,
     nx: scalarData.nx,
     ny: scalarData.ny,
