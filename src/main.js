@@ -13,6 +13,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader.js';
+import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { generateIsosurfaces } from './isosurface/marchingCubes.js';
 import { subdivideCatmullClark } from './geometry/catmullClarkSubdivision.js';
 
@@ -1092,6 +1093,22 @@ function computeTriangleAreaSquared(a, b, c) {
   return triangleEdgeCross.lengthSq() * 0.25;
 }
 
+function weldAndSmoothGeometry(geometry, tolerance = 1e-5) {
+  if (!(geometry instanceof THREE.BufferGeometry)) {
+    return geometry;
+  }
+
+  const mergedGeometry = mergeVertices(geometry, tolerance);
+  if (mergedGeometry !== geometry) {
+    geometry.dispose();
+  }
+
+  mergedGeometry.computeVertexNormals();
+  mergedGeometry.computeBoundingBox();
+  mergedGeometry.computeBoundingSphere();
+  return mergedGeometry;
+}
+
 function intersectCutEdge(a, b, distA, distB) {
   const denominator = distA - distB;
   let t = 0.5;
@@ -1232,10 +1249,7 @@ function clipGeometryByCutPlane(geometry, cutPlaneState) {
 
   const clippedGeometry = new THREE.BufferGeometry();
   clippedGeometry.setAttribute('position', new THREE.Float32BufferAttribute(clippedPositions, 3));
-  clippedGeometry.computeVertexNormals();
-  clippedGeometry.computeBoundingBox();
-  clippedGeometry.computeBoundingSphere();
-  return clippedGeometry;
+  return weldAndSmoothGeometry(clippedGeometry);
 }
 
 function rebuildIsosurfaces() {
