@@ -1718,13 +1718,6 @@ function rebuildIsosurfaces() {
 
   for (let i = 0; i < surfaces.length; i += 1) {
     let renderGeometry = surfaces[i].geometry;
-    if (settings.subdivision > 0) {
-      const subdivided = subdivideCatmullClark(renderGeometry, settings.subdivision);
-      if (subdivided !== renderGeometry) {
-        renderGeometry.dispose();
-        renderGeometry = subdivided;
-      }
-    }
 
     for (let cutIndex = 0; cutIndex < activeCutPlanes.length; cutIndex += 1) {
       const clipped = clipGeometryByCutPlane(renderGeometry, activeCutPlanes[cutIndex]);
@@ -1742,6 +1735,14 @@ function rebuildIsosurfaces() {
 
     if (!(renderGeometry instanceof THREE.BufferGeometry)) {
       continue;
+    }
+
+    if (settings.subdivision > 0) {
+      const subdivided = subdivideCatmullClark(renderGeometry, settings.subdivision);
+      if (subdivided !== renderGeometry) {
+        renderGeometry.dispose();
+        renderGeometry = subdivided;
+      }
     }
 
     const thickened = addThicknessToGeometry(renderGeometry, settings.thickness);
