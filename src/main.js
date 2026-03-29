@@ -106,7 +106,7 @@ function buildControlPanel(initial) {
     </div>
 
     <div class="ui-body panel-sections">
-      <div class="control-hint">Wheel = Zoom, MMB = Pan, RMB = Orbit, Shift+LMB Drag = Cut</div>
+      <div class="control-hint">Wheel = Zoom, MMB = Pan, RMB = Orbit</div>
 
       <section class="panel-section">
         <div class="panel-section-header">
@@ -114,14 +114,14 @@ function buildControlPanel(initial) {
         </div>
         <div class="panel-section-content panel-controls-stack">
           <div class="control control-grid-2">
-            <button type="button" id="start-sim" class="pill-button control-button-wide is-start-state">Simulate</button>
+            <button type="button" id="start-sim" class="pill-button control-button-wide is-start-state">Start</button>
             <button type="button" id="reset-sim" class="pill-button control-button-wide">Reset</button>
           </div>
 
           <label class="control">
             <div class="control-row">
               <span>Simulation Timeline</span>
-              <span id="simulation-timeline-value">0.00</span>
+              <span id="simulation-timeline-value">0</span>
             </div>
             <input type="range" id="simulation-timeline" min="0" max="1000" step="1" value="0" disabled />
           </label>
@@ -151,7 +151,7 @@ function buildControlPanel(initial) {
         <div class="panel-section-content panel-controls-stack">
           <label class="control">
             <div class="control-row">
-              <span>X res</span>
+              <span>X Resolution</span>
               <input type="number" id="x-res-value" class="value-editor" min="8" max="48" step="1" value="${initial.xRes}" />
             </div>
             <input type="range" id="x-res" min="8" max="48" step="1" value="${initial.xRes}" />
@@ -159,7 +159,7 @@ function buildControlPanel(initial) {
 
           <label class="control">
             <div class="control-row">
-              <span>Y res</span>
+              <span>Y Resolution</span>
               <input type="number" id="y-res-value" class="value-editor" min="8" max="48" step="1" value="${initial.yRes}" />
             </div>
             <input type="range" id="y-res" min="8" max="48" step="1" value="${initial.yRes}" />
@@ -167,7 +167,7 @@ function buildControlPanel(initial) {
 
           <label class="control">
             <div class="control-row">
-              <span>Z res</span>
+              <span>Z Resolution</span>
               <input type="number" id="z-res-value" class="value-editor" min="8" max="48" step="1" value="${initial.zRes}" />
             </div>
             <input type="range" id="z-res" min="8" max="48" step="1" value="${initial.zRes}" />
@@ -180,6 +180,7 @@ function buildControlPanel(initial) {
           <span class="panel-section-label">IsoSurface</span>
         </div>
         <div class="panel-section-content panel-controls-stack">
+          <div class="control-hint">Shift+LMB = Cut IsoSurface</div>
           <label class="control">
             <div class="control-row">
               <span>IsoValue</span>
@@ -259,13 +260,8 @@ function buildControlPanel(initial) {
           <span class="panel-section-label">Points</span>
         </div>
         <div class="panel-section-content panel-controls-stack">
-          <div class="control compact">
-            <div class="control-row">
-              <span>Count</span>
-              <span id="point-count-value">0</span>
-            </div>
-          </div>
-          <button type="button" id="clear-all" class="pill-button control-button-wide">Clear All</button>
+          <div class="control-hint">LMB = Add Custom Point</div>
+          <button type="button" id="clear-all" class="pill-button control-button-wide">Delete Custom Points</button>
 
           <label class="control">
             <div class="control-row">
@@ -439,7 +435,6 @@ function buildControlPanel(initial) {
     randomPointsValue: requireIn(panel, '#random-points-value'),
     randomSeedValue: requireIn(panel, '#random-seed-value'),
     simulationRateValue: requireIn(panel, '#simulation-rate-value'),
-    pointCountValue: requireIn(panel, '#point-count-value'),
     gradientStart: requireIn(panel, '#gradient-start-color'),
     gradientEnd: requireIn(panel, '#gradient-end-color'),
     fresnel: requireIn(panel, '#fresnel'),
@@ -868,6 +863,11 @@ const bounds = {
   max: new THREE.Vector3(1, 1, 1),
 };
 const boxCenter = new THREE.Vector3().addVectors(bounds.min, bounds.max).multiplyScalar(0.5);
+const simulationBoundsScale = 1.25;
+const simulationBounds = {
+  min: bounds.min.clone().sub(boxCenter).multiplyScalar(simulationBoundsScale).add(boxCenter),
+  max: bounds.max.clone().sub(boxCenter).multiplyScalar(simulationBoundsScale).add(boxCenter),
+};
 
 const boxSize = new THREE.Vector3().subVectors(bounds.max, bounds.min);
 const boxGeometry = new THREE.BoxGeometry(boxSize.x, boxSize.y, boxSize.z);
@@ -993,12 +993,14 @@ const cutCameraDirection = new THREE.Vector3();
 const simulationState = {
   running: false,
   elapsed: 0,
+  maxElapsed: 0,
   lastFrameMs: performance.now(),
   entries: [],
 };
 const simulationOffset = new THREE.Vector3();
 const simulationPosition = new THREE.Vector3();
 const simulationBoundsPadding = 0.001;
+const SIMULATION_TIMELINE_FPS = 60;
 
 function createSeededRandom(seed) {
   let state = seed >>> 0;
@@ -1017,6 +1019,7 @@ function regenerateGeneratedPoints() {
 
   const count = Math.max(0, Math.floor(settings.randomPoints));
   if (count <= 0) {
+    invalidateSimulationSession();
     return;
   }
 
@@ -1037,6 +1040,8 @@ function regenerateGeneratedPoints() {
     marker.position.copy(point);
     generatedPointGroup.add(marker);
   }
+
+  invalidateSimulationSession();
 }
 
 function syncPointCount() {
@@ -1092,6 +1097,9 @@ function syncSelectedPointFromMarker() {
   }
 
   userPoints[selectedPointIndex].copy(marker.position);
+  if (!simulationState.running) {
+    invalidateSimulationSession();
+  }
   if (isTransformDragging) {
     realtimeRebuildRequested = true;
   } else {
@@ -1102,7 +1110,7 @@ function syncSelectedPointFromMarker() {
 transformControls.addEventListener('objectChange', syncSelectedPointFromMarker);
 
 function updatePointCountLabel() {
-  ui.pointCountValue.textContent = String(settings.pointCount);
+  void settings.pointCount;
 }
 
 function setPointEditingLocked(locked) {
@@ -1115,21 +1123,25 @@ function setPointEditingLocked(locked) {
 
 function updateSimulationButtonState() {
   if (simulationState.running) {
-    ui.startSim.textContent = 'Stop';
+    ui.startSim.textContent = 'Pause';
     ui.startSim.classList.remove('is-start-state');
     ui.startSim.classList.add('is-stop-state');
   } else {
-    ui.startSim.textContent = 'Simulate';
+    ui.startSim.textContent = 'Start';
     ui.startSim.classList.remove('is-stop-state');
     ui.startSim.classList.add('is-start-state');
   }
 }
 
 function updateSimulationTimelineUi() {
-  const timelineMax = Number.parseInt(ui.simulationTimeline.max, 10);
-  const timelineValue = timelineMax > 0 ? Math.floor((simulationState.elapsed * 60) % (timelineMax + 1)) : 0;
-  ui.simulationTimeline.value = `${timelineValue}`;
-  ui.simulationTimelineValue.textContent = simulationState.elapsed.toFixed(2);
+  const maxFrames = Math.max(1, Math.ceil(simulationState.maxElapsed * SIMULATION_TIMELINE_FPS));
+  const frame = Math.round(
+    THREE.MathUtils.clamp(simulationState.elapsed, 0, Math.max(simulationState.maxElapsed, 0)) * SIMULATION_TIMELINE_FPS,
+  );
+  ui.simulationTimeline.max = `${maxFrames}`;
+  ui.simulationTimeline.value = `${THREE.MathUtils.clamp(frame, 0, maxFrames)}`;
+  ui.simulationTimeline.disabled = simulationState.running || simulationState.entries.length === 0;
+  ui.simulationTimelineValue.textContent = `${THREE.MathUtils.clamp(frame, 0, maxFrames)}`;
   updateRangeProgress(ui.simulationTimeline);
 }
 
@@ -1142,9 +1154,21 @@ function randomUnitVector() {
 }
 
 function clampPointToBounds(point) {
-  point.x = THREE.MathUtils.clamp(point.x, bounds.min.x + simulationBoundsPadding, bounds.max.x - simulationBoundsPadding);
-  point.y = THREE.MathUtils.clamp(point.y, bounds.min.y + simulationBoundsPadding, bounds.max.y - simulationBoundsPadding);
-  point.z = THREE.MathUtils.clamp(point.z, bounds.min.z + simulationBoundsPadding, bounds.max.z - simulationBoundsPadding);
+  point.x = THREE.MathUtils.clamp(
+    point.x,
+    simulationBounds.min.x + simulationBoundsPadding,
+    simulationBounds.max.x - simulationBoundsPadding,
+  );
+  point.y = THREE.MathUtils.clamp(
+    point.y,
+    simulationBounds.min.y + simulationBoundsPadding,
+    simulationBounds.max.y - simulationBoundsPadding,
+  );
+  point.z = THREE.MathUtils.clamp(
+    point.z,
+    simulationBounds.min.z + simulationBoundsPadding,
+    simulationBounds.max.z - simulationBoundsPadding,
+  );
 }
 
 function computeTravelBudget(value, min, max) {
@@ -1162,9 +1186,9 @@ function createSimulationOrbitEntry(pointRef, marker) {
   tangentA.addScaledVector(normal, -normal.dot(tangentA)).normalize();
   const tangentB = new THREE.Vector3().crossVectors(normal, tangentA).normalize();
 
-  const travelBudgetX = computeTravelBudget(pointRef.x, bounds.min.x, bounds.max.x);
-  const travelBudgetY = computeTravelBudget(pointRef.y, bounds.min.y, bounds.max.y);
-  const travelBudgetZ = computeTravelBudget(pointRef.z, bounds.min.z, bounds.max.z);
+  const travelBudgetX = computeTravelBudget(pointRef.x, simulationBounds.min.x, simulationBounds.max.x);
+  const travelBudgetY = computeTravelBudget(pointRef.y, simulationBounds.min.y, simulationBounds.max.y);
+  const travelBudgetZ = computeTravelBudget(pointRef.z, simulationBounds.min.z, simulationBounds.max.z);
   const minTravelBudget = Math.max(0.05, Math.min(travelBudgetX, travelBudgetY, travelBudgetZ));
 
   const localOrbitScale = THREE.MathUtils.clamp(minTravelBudget * 0.58, 0.06, 0.34);
@@ -1220,6 +1244,17 @@ function createSimulationOrbitEntry(pointRef, marker) {
   };
 }
 
+function invalidateSimulationSession() {
+  if (simulationState.running || simulationState.entries.length === 0) {
+    return;
+  }
+
+  simulationState.entries = [];
+  simulationState.elapsed = 0;
+  simulationState.maxElapsed = 0;
+  updateSimulationTimelineUi();
+}
+
 function rebuildSimulationEntries() {
   simulationState.entries = [];
 
@@ -1234,52 +1269,8 @@ function rebuildSimulationEntries() {
   }
 }
 
-function resetSimulationToBasePositions() {
-  for (let i = 0; i < simulationState.entries.length; i += 1) {
-    const entry = simulationState.entries[i];
-    entry.pointRef.copy(entry.basePosition);
-    if (entry.marker instanceof THREE.Object3D) {
-      entry.marker.position.copy(entry.basePosition);
-    }
-  }
-  realtimeRebuildRequested = true;
-}
-
-function setSimulationRunning(nextRunning) {
-  if (simulationState.running === nextRunning) {
-    return;
-  }
-
-  simulationState.running = nextRunning;
-  simulationState.lastFrameMs = performance.now();
-
-  if (nextRunning) {
-    clearPointSelection();
-    transformControls.enabled = false;
-    rebuildSimulationEntries();
-    simulationState.elapsed = 0;
-    updateSimulationTimelineUi();
-  } else {
-    transformControls.enabled = true;
-  }
-
-  setPointEditingLocked(nextRunning);
-  updateSimulationButtonState();
-}
-
-function stepSimulation(deltaSeconds) {
-  if (!simulationState.running) {
-    return;
-  }
-
-  const scaledDelta = Math.max(0, deltaSeconds) * settings.simulationRate;
-  if (scaledDelta <= 0) {
-    return;
-  }
-
-  simulationState.elapsed += scaledDelta;
+function applySimulationAtCurrentElapsed() {
   if (simulationState.entries.length === 0) {
-    updateSimulationTimelineUi();
     return;
   }
 
@@ -1311,8 +1302,65 @@ function stepSimulation(deltaSeconds) {
     }
   }
 
-  updateSimulationTimelineUi();
   realtimeRebuildRequested = true;
+}
+
+function resetSimulationToBasePositions() {
+  for (let i = 0; i < simulationState.entries.length; i += 1) {
+    const entry = simulationState.entries[i];
+    entry.pointRef.copy(entry.basePosition);
+    if (entry.marker instanceof THREE.Object3D) {
+      entry.marker.position.copy(entry.basePosition);
+    }
+  }
+  realtimeRebuildRequested = true;
+}
+
+function setSimulationRunning(nextRunning) {
+  if (simulationState.running === nextRunning) {
+    return;
+  }
+
+  simulationState.running = nextRunning;
+  simulationState.lastFrameMs = performance.now();
+
+  if (nextRunning) {
+    clearPointSelection();
+    transformControls.enabled = false;
+    if (simulationState.entries.length === 0) {
+      rebuildSimulationEntries();
+      simulationState.elapsed = 0;
+      simulationState.maxElapsed = 0;
+      applySimulationAtCurrentElapsed();
+    }
+  } else {
+    transformControls.enabled = true;
+  }
+
+  setPointEditingLocked(nextRunning);
+  updateSimulationButtonState();
+  updateSimulationTimelineUi();
+}
+
+function stepSimulation(deltaSeconds) {
+  if (!simulationState.running) {
+    return;
+  }
+
+  const scaledDelta = Math.max(0, deltaSeconds) * settings.simulationRate;
+  if (scaledDelta <= 0) {
+    return;
+  }
+
+  simulationState.elapsed += scaledDelta;
+  simulationState.maxElapsed = Math.max(simulationState.maxElapsed, simulationState.elapsed);
+  if (simulationState.entries.length === 0) {
+    updateSimulationTimelineUi();
+    return;
+  }
+
+  applySimulationAtCurrentElapsed();
+  updateSimulationTimelineUi();
 }
 
 function clearIsosurfaceMeshes() {
@@ -1758,6 +1806,22 @@ bindRange(ui.simulationRate, ui.simulationRateValue, (value) => `${value.toFixed
   settings.simulationRate = value;
 });
 
+ui.simulationTimeline.addEventListener('input', () => {
+  if (simulationState.running || simulationState.entries.length === 0) {
+    return;
+  }
+
+  const frame = Number.parseInt(ui.simulationTimeline.value, 10);
+  if (!Number.isFinite(frame)) {
+    return;
+  }
+
+  const elapsed = frame / SIMULATION_TIMELINE_FPS;
+  simulationState.elapsed = THREE.MathUtils.clamp(elapsed, 0, simulationState.maxElapsed);
+  applySimulationAtCurrentElapsed();
+  updateSimulationTimelineUi();
+});
+
 bindRange(ui.xRes, ui.xResValue, (value) => `${Math.round(value)}`, (value) => {
   settings.xRes = Math.round(value);
   scheduleRebuild();
@@ -1846,6 +1910,7 @@ ui.resetSim.addEventListener('click', () => {
     rebuildSimulationEntries();
   }
   simulationState.elapsed = 0;
+  simulationState.maxElapsed = 0;
   resetSimulationToBasePositions();
   updateSimulationTimelineUi();
 });
@@ -1854,6 +1919,7 @@ ui.clearAll.addEventListener('click', () => {
   setSimulationRunning(false);
   simulationState.entries = [];
   simulationState.elapsed = 0;
+  simulationState.maxElapsed = 0;
   updateSimulationTimelineUi();
 
   clearPointSelection();
@@ -2017,6 +2083,7 @@ function addPointFromEvent(event) {
     return false;
   }
   userPoints.push(point);
+  invalidateSimulationSession();
 
   const marker = new THREE.Mesh(pointGeometry, pointMaterial);
   marker.position.copy(point);
@@ -2036,6 +2103,7 @@ function removePointAtIndex(index) {
 
   clearPointSelection();
   userPoints.splice(index, 1);
+  invalidateSimulationSession();
 
   const marker = pointGroup.children[index];
   if (marker) {
