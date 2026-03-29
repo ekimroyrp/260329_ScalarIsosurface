@@ -227,6 +227,52 @@ function buildControlPanel(initial) {
             </div>
           </div>
           <button type="button" id="clear-all" class="pill-button control-button-wide">Clear All</button>
+
+          <label class="control">
+            <div class="control-row">
+              <span>Random Points</span>
+              <input
+                type="number"
+                id="random-points-value"
+                class="value-editor"
+                min="0"
+                max="200"
+                step="1"
+                value="${initial.randomPoints}"
+              />
+            </div>
+            <input
+              type="range"
+              id="random-points"
+              min="0"
+              max="200"
+              step="1"
+              value="${initial.randomPoints}"
+            />
+          </label>
+
+          <label class="control">
+            <div class="control-row">
+              <span>Random Seed</span>
+              <input
+                type="number"
+                id="random-seed-value"
+                class="value-editor"
+                min="0"
+                max="9999"
+                step="1"
+                value="${initial.randomSeed}"
+              />
+            </div>
+            <input
+              type="range"
+              id="random-seed"
+              min="0"
+              max="9999"
+              step="1"
+              value="${initial.randomSeed}"
+            />
+          </label>
         </div>
       </section>
 
@@ -336,6 +382,8 @@ function buildControlPanel(initial) {
     offset: requireIn(panel, '#offset'),
     subdivision: requireIn(panel, '#subdivision'),
     smoothing: requireIn(panel, '#smoothing'),
+    randomPoints: requireIn(panel, '#random-points'),
+    randomSeed: requireIn(panel, '#random-seed'),
     xResValue: requireIn(panel, '#x-res-value'),
     yResValue: requireIn(panel, '#y-res-value'),
     zResValue: requireIn(panel, '#z-res-value'),
@@ -344,6 +392,8 @@ function buildControlPanel(initial) {
     offsetValue: requireIn(panel, '#offset-value'),
     subdivisionValue: requireIn(panel, '#subdivision-value'),
     smoothingValue: requireIn(panel, '#smoothing-value'),
+    randomPointsValue: requireIn(panel, '#random-points-value'),
+    randomSeedValue: requireIn(panel, '#random-seed-value'),
     pointCountValue: requireIn(panel, '#point-count-value'),
     gradientStart: requireIn(panel, '#gradient-start-color'),
     gradientEnd: requireIn(panel, '#gradient-end-color'),
@@ -436,6 +486,8 @@ const settings = {
   offset: 0.08,
   subdivision: 1,
   smoothing: 2,
+  randomPoints: 0,
+  randomSeed: 0,
   gradientStart: '#febee0',
   gradientEnd: '#7af0ff',
   fresnel: 0.1,
@@ -820,9 +872,12 @@ function createIsosurfaceMaterial(baseColor) {
 const isoGroup = new THREE.Group();
 scene.add(isoGroup);
 
-const points = [];
+const userPoints = [];
+const generatedPoints = [];
 const pointGroup = new THREE.Group();
+const generatedPointGroup = new THREE.Group();
 scene.add(pointGroup);
+scene.add(generatedPointGroup);
 
 const pointGeometry = new THREE.SphereGeometry(0.045, 16, 12);
 const pointMaterial = new THREE.MeshStandardMaterial({
@@ -831,6 +886,14 @@ const pointMaterial = new THREE.MeshStandardMaterial({
   emissiveIntensity: 0.78,
   roughness: 0.38,
   metalness: 0.12,
+});
+const generatedPointGeometry = new THREE.SphereGeometry(0.0225, 14, 10);
+const generatedPointMaterial = new THREE.MeshStandardMaterial({
+  color: 0xa94ce1,
+  emissive: 0x5110a4,
+  emissiveIntensity: 0.72,
+  roughness: 0.5,
+  metalness: 0.05,
 });
 const selectedPointMaterial = new THREE.MeshStandardMaterial({
   color: 0xff8a00,
@@ -849,6 +912,50 @@ const clickMoveThresholdSq = 64;
 const sigma = 0.22;
 let rebuildTimer = null;
 let realtimeRebuildRequested = false;
+
+function createSeededRandom(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state += 0x6d2b79f5;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function regenerateGeneratedPoints() {
+  generatedPoints.length = 0;
+  generatedPointGroup.clear();
+
+  const count = Math.max(0, Math.floor(settings.randomPoints));
+  if (count <= 0) {
+    return;
+  }
+
+  const rng = createSeededRandom(Math.floor(settings.randomSeed));
+  const spanX = bounds.max.x - bounds.min.x;
+  const spanY = bounds.max.y - bounds.min.y;
+  const spanZ = bounds.max.z - bounds.min.z;
+
+  for (let i = 0; i < count; i += 1) {
+    const point = new THREE.Vector3(
+      bounds.min.x + rng() * spanX,
+      bounds.min.y + rng() * spanY,
+      bounds.min.z + rng() * spanZ,
+    );
+    generatedPoints.push(point);
+
+    const marker = new THREE.Mesh(generatedPointGeometry, generatedPointMaterial);
+    marker.position.copy(point);
+    generatedPointGroup.add(marker);
+  }
+}
+
+function syncPointCount() {
+  settings.pointCount = userPoints.length + generatedPoints.length;
+  updatePointCountLabel();
+}
 
 function refreshPointMarkerMaterials() {
   for (let i = 0; i < pointGroup.children.length; i += 1) {
@@ -888,7 +995,7 @@ function selectPointByIndex(index) {
 }
 
 function syncSelectedPointFromMarker() {
-  if (selectedPointIndex < 0 || selectedPointIndex >= points.length) {
+  if (selectedPointIndex < 0 || selectedPointIndex >= userPoints.length) {
     return;
   }
 
@@ -897,7 +1004,7 @@ function syncSelectedPointFromMarker() {
     return;
   }
 
-  points[selectedPointIndex].copy(marker.position);
+  userPoints[selectedPointIndex].copy(marker.position);
   if (isTransformDragging) {
     realtimeRebuildRequested = true;
   } else {
@@ -947,6 +1054,7 @@ function applyMaterialSettingsToMeshes() {
 
 function rebuildIsosurfaces() {
   clearIsosurfaceMeshes();
+  const allPoints = userPoints.concat(generatedPoints);
 
   const surfaces = generateIsosurfaces({
     bounds,
@@ -956,7 +1064,7 @@ function rebuildIsosurfaces() {
       z: settings.zRes,
     },
     isoValue: settings.isoValue,
-    points,
+    points: allPoints,
     sigma,
     amount: settings.amount,
     offset: settings.offset,
@@ -1205,6 +1313,20 @@ bindRange(ui.smoothing, ui.smoothingValue, (value) => `${Math.round(value)}`, (v
   scheduleRebuild();
 });
 
+bindRange(ui.randomPoints, ui.randomPointsValue, (value) => `${Math.round(value)}`, (value) => {
+  settings.randomPoints = Math.round(value);
+  regenerateGeneratedPoints();
+  syncPointCount();
+  rebuildNow();
+});
+
+bindRange(ui.randomSeed, ui.randomSeedValue, (value) => `${Math.round(value)}`, (value) => {
+  settings.randomSeed = Math.round(value);
+  regenerateGeneratedPoints();
+  syncPointCount();
+  rebuildNow();
+});
+
 bindRange(ui.fresnel, ui.fresnelValue, (value) => `${value.toFixed(2)}`, (value) => {
   settings.fresnel = value;
   applyMaterialSettingsToMeshes();
@@ -1232,10 +1354,15 @@ ui.gradientEnd.addEventListener('input', () => {
 
 ui.clearAll.addEventListener('click', () => {
   clearPointSelection();
-  points.length = 0;
+  userPoints.length = 0;
+  generatedPoints.length = 0;
   pointGroup.clear();
-  settings.pointCount = 0;
-  updatePointCountLabel();
+  generatedPointGroup.clear();
+  settings.randomPoints = 0;
+  ui.randomPoints.value = '0';
+  ui.randomPointsValue.value = '0';
+  updateRangeProgress(ui.randomPoints);
+  syncPointCount();
   scheduleRebuild();
 });
 
@@ -1259,27 +1386,26 @@ function addPointFromEvent(event) {
   }
 
   const point = hits[0].point.clone();
-  points.push(point);
+  userPoints.push(point);
 
   const marker = new THREE.Mesh(pointGeometry, pointMaterial);
   marker.position.copy(point);
-  marker.userData.pointIndex = points.length - 1;
+  marker.userData.pointIndex = userPoints.length - 1;
   pointGroup.add(marker);
 
-  settings.pointCount = points.length;
-  updatePointCountLabel();
-  selectPointByIndex(points.length - 1);
+  syncPointCount();
+  selectPointByIndex(userPoints.length - 1);
   scheduleRebuild();
   return true;
 }
 
 function removePointAtIndex(index) {
-  if (!Number.isInteger(index) || index < 0 || index >= points.length) {
+  if (!Number.isInteger(index) || index < 0 || index >= userPoints.length) {
     return false;
   }
 
   clearPointSelection();
-  points.splice(index, 1);
+  userPoints.splice(index, 1);
 
   const marker = pointGroup.children[index];
   if (marker) {
@@ -1291,11 +1417,10 @@ function removePointAtIndex(index) {
     child.userData.pointIndex = i;
   }
 
-  settings.pointCount = points.length;
-  updatePointCountLabel();
+  syncPointCount();
 
-  if (points.length > 0) {
-    selectPointByIndex(Math.min(index, points.length - 1));
+  if (userPoints.length > 0) {
+    selectPointByIndex(Math.min(index, userPoints.length - 1));
   }
 
   scheduleRebuild();
@@ -1470,7 +1595,7 @@ function renderLoop() {
   composer.render();
 }
 
-updatePointCountLabel();
+syncPointCount();
 renderLoop();
 rebuildIsosurfaces();
 clampPanelToViewport();
@@ -1492,6 +1617,8 @@ window.addEventListener('beforeunload', () => {
   pointGeometry.dispose();
   pointMaterial.dispose();
   selectedPointMaterial.dispose();
+  generatedPointGeometry.dispose();
+  generatedPointMaterial.dispose();
 
   boxEdges.geometry.dispose();
   boxEdges.material.dispose();
