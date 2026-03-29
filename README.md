@@ -8,6 +8,7 @@
 - Independent X, Y, and Z grid resolution controls.
 - Adjustable iso value threshold for surface extraction.
 - Multi-surface extraction where `Layers` sets layer count and `Offset` sets equal spacing between layers moving away from points, using a smooth signed-distance projection field.
+- `Thickness` slider for per-layer shell thickness, generating true thickened geometry.
 - Catmull-Clark subdivision smoothing with an integer `Subdivision` level control.
 - Volumetric `Smoothing` control that filters the signed-distance field before meshing, preserving target layer levels while reducing noisy artifacts.
 - DifferentialGrowth-inspired visual style with dark atmospheric environment, custom shader shading, bloom, and glassmorphism panel UI.
@@ -50,6 +51,6 @@
 - `Right Mouse Drag`: Orbit camera.
 - `Middle Mouse Drag`: Pan camera.
 - `Mouse Wheel`: Zoom.
-- `UI Panel`: Set `X Resolution`, `Y Resolution`, `Z Resolution`, `IsoValue`, `Layers`, `Offset` (equal layer spacing), `Subdivision`, `Smoothing`, `Gradient Start`, `Gradient End`, `Fresnel`, `Specular`, `Bloom`, and `Delete Custom Points`.
+- `UI Panel`: Set `X Resolution`, `Y Resolution`, `Z Resolution`, `IsoValue`, `Layers`, `Offset` (equal layer spacing), `Subdivision`, `Smoothing`, `Thickness`, `Gradient Start`, `Gradient End`, `Fresnel`, `Specular`, `Bloom`, and `Delete Custom Points`.
 - `Numeric Inputs`: Click value fields to type exact numbers; values snap to each control's step and limits.
 - `Export`: Download generated geometry as `OBJ` or `GLB`, or save a `Screenshot`.

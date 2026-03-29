@@ -252,6 +252,22 @@ function buildControlPanel(initial) {
             </div>
             <input type="range" id="smoothing" min="0" max="3" step="1" value="${initial.smoothing}" />
           </label>
+
+          <label class="control">
+            <div class="control-row">
+              <span>Thickness</span>
+              <input
+                type="number"
+                id="thickness-value"
+                class="value-editor"
+                min="0"
+                max="0.2"
+                step="0.005"
+                value="${initial.thickness.toFixed(3)}"
+              />
+            </div>
+            <input type="range" id="thickness" min="0" max="0.2" step="0.005" value="${initial.thickness}" />
+          </label>
         </div>
       </section>
 
@@ -422,6 +438,7 @@ function buildControlPanel(initial) {
     offset: requireIn(panel, '#offset'),
     subdivision: requireIn(panel, '#subdivision'),
     smoothing: requireIn(panel, '#smoothing'),
+    thickness: requireIn(panel, '#thickness'),
     randomPoints: requireIn(panel, '#random-points'),
     randomSeed: requireIn(panel, '#random-seed'),
     xResValue: requireIn(panel, '#x-res-value'),
@@ -432,6 +449,7 @@ function buildControlPanel(initial) {
     offsetValue: requireIn(panel, '#offset-value'),
     subdivisionValue: requireIn(panel, '#subdivision-value'),
     smoothingValue: requireIn(panel, '#smoothing-value'),
+    thicknessValue: requireIn(panel, '#thickness-value'),
     randomPointsValue: requireIn(panel, '#random-points-value'),
     randomSeedValue: requireIn(panel, '#random-seed-value'),
     simulationRateValue: requireIn(panel, '#simulation-rate-value'),
@@ -527,6 +545,7 @@ const settings = {
   offset: 0.08,
   subdivision: 1,
   smoothing: 2,
+  thickness: 0,
   randomPoints: 0,
   randomSeed: 0,
   gradientStart: '#febee0',
@@ -1420,6 +1439,121 @@ function weldAndSmoothGeometry(geometry, tolerance = 1e-5) {
   return mergedGeometry;
 }
 
+function addThicknessToGeometry(geometry, thickness) {
+  if (!(geometry instanceof THREE.BufferGeometry) || thickness <= 1e-6) {
+    return geometry;
+  }
+
+  const source = mergeVertices(geometry, 1e-5);
+  const sourcePosition = source.getAttribute('position');
+  if (!(sourcePosition instanceof THREE.BufferAttribute) || sourcePosition.count < 3) {
+    if (source !== geometry) {
+      source.dispose();
+    }
+    return geometry;
+  }
+
+  source.computeVertexNormals();
+  const sourceNormal = source.getAttribute('normal');
+  if (!(sourceNormal instanceof THREE.BufferAttribute)) {
+    if (source !== geometry) {
+      source.dispose();
+    }
+    return geometry;
+  }
+
+  const vertexCount = sourcePosition.count;
+  const totalVertexCount = vertexCount * 2;
+  const halfThickness = thickness * 0.5;
+  const thickPositions = new Float32Array(totalVertexCount * 3);
+
+  for (let i = 0; i < vertexCount; i += 1) {
+    const px = sourcePosition.getX(i);
+    const py = sourcePosition.getY(i);
+    const pz = sourcePosition.getZ(i);
+    const nx = sourceNormal.getX(i);
+    const ny = sourceNormal.getY(i);
+    const nz = sourceNormal.getZ(i);
+    const outerBase = i * 3;
+    const innerBase = (i + vertexCount) * 3;
+
+    thickPositions[outerBase] = px + nx * halfThickness;
+    thickPositions[outerBase + 1] = py + ny * halfThickness;
+    thickPositions[outerBase + 2] = pz + nz * halfThickness;
+
+    thickPositions[innerBase] = px - nx * halfThickness;
+    thickPositions[innerBase + 1] = py - ny * halfThickness;
+    thickPositions[innerBase + 2] = pz - nz * halfThickness;
+  }
+
+  const sourceIndex = source.getIndex();
+  let sourceIndices;
+  if (sourceIndex) {
+    sourceIndices = sourceIndex.array;
+  } else {
+    sourceIndices = new Uint32Array(sourcePosition.count);
+    for (let i = 0; i < sourcePosition.count; i += 1) {
+      sourceIndices[i] = i;
+    }
+  }
+
+  const thickIndices = [];
+  const boundaryEdges = new Map();
+  const addBoundaryEdge = (from, to) => {
+    const low = Math.min(from, to);
+    const high = Math.max(from, to);
+    const key = `${low}:${high}`;
+    const existing = boundaryEdges.get(key);
+    if (existing) {
+      existing.count += 1;
+      return;
+    }
+    boundaryEdges.set(key, { from, to, count: 1 });
+  };
+
+  for (let i = 0; i < sourceIndices.length; i += 3) {
+    const a = sourceIndices[i];
+    const b = sourceIndices[i + 1];
+    const c = sourceIndices[i + 2];
+
+    thickIndices.push(a, b, c);
+    thickIndices.push(c + vertexCount, b + vertexCount, a + vertexCount);
+
+    addBoundaryEdge(a, b);
+    addBoundaryEdge(b, c);
+    addBoundaryEdge(c, a);
+  }
+
+  for (const edge of boundaryEdges.values()) {
+    if (edge.count !== 1) {
+      continue;
+    }
+
+    const outerA = edge.from;
+    const outerB = edge.to;
+    const innerA = edge.from + vertexCount;
+    const innerB = edge.to + vertexCount;
+
+    thickIndices.push(outerA, outerB, innerB);
+    thickIndices.push(outerA, innerB, innerA);
+  }
+
+  const thickGeometry = new THREE.BufferGeometry();
+  thickGeometry.setAttribute('position', new THREE.Float32BufferAttribute(thickPositions, 3));
+  const indexArray =
+    totalVertexCount > 65535 ? new Uint32Array(thickIndices) : new Uint16Array(thickIndices);
+  thickGeometry.setIndex(new THREE.BufferAttribute(indexArray, 1));
+  thickGeometry.computeVertexNormals();
+  thickGeometry.computeBoundingBox();
+  thickGeometry.computeBoundingSphere();
+
+  if (source !== geometry) {
+    source.dispose();
+  }
+
+  return thickGeometry;
+}
+
 function intersectCutEdge(a, b, distA, distB) {
   const denominator = distA - distB;
   let t = 0.5;
@@ -1608,6 +1742,12 @@ function rebuildIsosurfaces() {
 
     if (!(renderGeometry instanceof THREE.BufferGeometry)) {
       continue;
+    }
+
+    const thickened = addThicknessToGeometry(renderGeometry, settings.thickness);
+    if (thickened !== renderGeometry) {
+      renderGeometry.dispose();
+      renderGeometry = thickened;
     }
 
     const material = createIsosurfaceMaterial(getIsosurfaceColor(i, surfaces.length));
@@ -1859,6 +1999,11 @@ bindRange(ui.subdivision, ui.subdivisionValue, (value) => `${Math.round(value)}`
 
 bindRange(ui.smoothing, ui.smoothingValue, (value) => `${Math.round(value)}`, (value) => {
   settings.smoothing = Math.round(value);
+  scheduleRebuild();
+});
+
+bindRange(ui.thickness, ui.thicknessValue, (value) => `${value.toFixed(3)}`, (value) => {
+  settings.thickness = value;
   scheduleRebuild();
 });
 
