@@ -10,6 +10,8 @@
 - Multi-surface extraction where `Amount` sets layer count and `offset` sets equal spacing between layers moving away from points, using a smooth signed-distance projection field.
 - Catmull-Clark subdivision smoothing with an integer `Subdivision` level control.
 - DifferentialGrowth-inspired visual style with dark atmospheric environment, custom shader shading, bloom, and glassmorphism panel UI.
+- Material panel controls for layer gradient (`Gradient Start` to `Gradient End`), Fresnel, Specular, and Bloom.
+- Export tools for `OBJ`, `GLB`, and `Screenshot` output.
 - Left-click point placement on the box surface.
 - Right-drag orbit and middle-drag pan navigation.
 - Live point count and one-click clear operation.
@@ -32,4 +34,5 @@
 - `Right Mouse Drag`: Orbit camera.
 - `Middle Mouse Drag`: Pan camera.
 - `Mouse Wheel`: Zoom.
-- `GUI`: Set `X res`, `Y res`, `Z res`, `isoValue`, `Amount`, `offset` (equal layer spacing), `Subdivision`, and `Clear All` points.
+- `UI Panel`: Set `X res`, `Y res`, `Z res`, `isoValue`, `Amount`, `offset` (equal layer spacing), `Subdivision`, `Gradient Start`, `Gradient End`, `Fresnel`, `Specular`, `Bloom`, and `Clear All` points.
+- `Export`: Download generated geometry as `OBJ` or `GLB`, or save a `Screenshot`.

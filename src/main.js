@@ -1,6 +1,7 @@
 import './styles.css';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
@@ -187,6 +188,69 @@ function buildControlPanel(initial) {
           <button type="button" id="clear-all" class="pill-button control-button-wide">Clear All</button>
         </div>
       </section>
+
+      <section class="panel-section">
+        <div class="panel-section-header">
+          <span class="panel-section-label">Material</span>
+        </div>
+        <div class="panel-section-content panel-controls-stack">
+          <div class="control control-grid-2">
+            <label class="control compact">
+              <div class="control-row">
+                <span>Gradient Start</span>
+              </div>
+              <input type="color" id="gradient-start-color" class="color-picker" value="${initial.gradientStart}" />
+            </label>
+            <label class="control compact">
+              <div class="control-row">
+                <span>Gradient End</span>
+              </div>
+              <input type="color" id="gradient-end-color" class="color-picker" value="${initial.gradientEnd}" />
+            </label>
+          </div>
+
+          <label class="control">
+            <div class="control-row">
+              <span>Fresnel</span>
+              <span id="fresnel-value">${initial.fresnel.toFixed(2)}</span>
+            </div>
+            <input type="range" id="fresnel" min="0" max="2" step="0.01" value="${initial.fresnel}" />
+          </label>
+
+          <label class="control">
+            <div class="control-row">
+              <span>Specular</span>
+              <span id="specular-value">${initial.specular.toFixed(2)}</span>
+            </div>
+            <input type="range" id="specular" min="0" max="2" step="0.01" value="${initial.specular}" />
+          </label>
+
+          <label class="control">
+            <div class="control-row">
+              <span>Bloom</span>
+              <span id="bloom-value">${initial.bloom.toFixed(2)}</span>
+            </div>
+            <input type="range" id="bloom" min="0" max="2" step="0.01" value="${initial.bloom}" />
+          </label>
+        </div>
+      </section>
+
+      <section class="panel-section">
+        <div class="panel-section-header">
+          <span class="panel-section-label">Export</span>
+        </div>
+        <div class="panel-section-content panel-controls-stack">
+          <div class="control">
+            <button type="button" id="export-obj" class="pill-button control-button-wide">Export OBJ</button>
+          </div>
+          <div class="control">
+            <button type="button" id="export-glb" class="pill-button control-button-wide">Export GLB</button>
+          </div>
+          <div class="control">
+            <button type="button" id="export-screenshot" class="pill-button control-button-wide">Export Screenshot</button>
+          </div>
+        </div>
+      </section>
     </div>
     <div id="ui-handle-bottom"></div>
   `;
@@ -214,7 +278,18 @@ function buildControlPanel(initial) {
     offsetValue: requireIn(panel, '#offset-value'),
     subdivisionValue: requireIn(panel, '#subdivision-value'),
     pointCountValue: requireIn(panel, '#point-count-value'),
+    gradientStart: requireIn(panel, '#gradient-start-color'),
+    gradientEnd: requireIn(panel, '#gradient-end-color'),
+    fresnel: requireIn(panel, '#fresnel'),
+    specular: requireIn(panel, '#specular'),
+    bloom: requireIn(panel, '#bloom'),
+    fresnelValue: requireIn(panel, '#fresnel-value'),
+    specularValue: requireIn(panel, '#specular-value'),
+    bloomValue: requireIn(panel, '#bloom-value'),
     clearAll: requireIn(panel, '#clear-all'),
+    exportObj: requireIn(panel, '#export-obj'),
+    exportGlb: requireIn(panel, '#export-glb'),
+    exportScreenshot: requireIn(panel, '#export-screenshot'),
     rangeInputs: Array.from(panel.querySelectorAll('input[type="range"]')),
   };
 }
@@ -248,6 +323,11 @@ const settings = {
   amount: 1,
   offset: 0.08,
   subdivision: 0,
+  gradientStart: '#7eafd0',
+  gradientEnd: '#7ce7de',
+  fresnel: 0.48,
+  specular: 0.42,
+  bloom: 0.34,
   pointCount: 0,
 };
 
@@ -370,7 +450,12 @@ const composer = new EffectComposer(renderer);
 const renderPass = new RenderPass(scene, camera);
 composer.addPass(renderPass);
 
-const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.34, 0.72, 0.16);
+const bloomPass = new UnrealBloomPass(
+  new THREE.Vector2(window.innerWidth, window.innerHeight),
+  settings.bloom,
+  0.72,
+  0.16,
+);
 composer.addPass(bloomPass);
 
 const fxaaPass = new ShaderPass(FXAAShader);
@@ -453,7 +538,7 @@ boxGeometry.dispose();
 const lightDirA = keyLightA.position.clone().normalize();
 const lightDirB = keyLightB.position.clone().normalize();
 
-function createIsosurfaceMaterial(baseColor, layerFactor) {
+function createIsosurfaceMaterial(baseColor) {
   return new THREE.ShaderMaterial({
     side: THREE.DoubleSide,
     transparent: false,
@@ -462,8 +547,8 @@ function createIsosurfaceMaterial(baseColor, layerFactor) {
       uBaseColor: { value: baseColor.clone() },
       uLightDirA: { value: lightDirA },
       uLightDirB: { value: lightDirB },
-      uFresnel: { value: 0.48 + layerFactor * 0.22 },
-      uSpecular: { value: 0.42 + layerFactor * 0.18 },
+      uFresnel: { value: settings.fresnel },
+      uSpecular: { value: settings.specular },
     },
     vertexShader: ISOSURFACE_VERTEX_SHADER,
     fragmentShader: ISOSURFACE_FRAGMENT_SHADER,
@@ -508,15 +593,28 @@ function clearIsosurfaceMeshes() {
 }
 
 function getIsosurfaceColor(index, totalCount) {
-  const color = new THREE.Color();
+  const start = new THREE.Color(settings.gradientStart);
+  const end = new THREE.Color(settings.gradientEnd);
   if (totalCount <= 1) {
-    color.set(0x5a90d1);
-    return color;
+    return start;
   }
 
   const t = index / (totalCount - 1);
-  color.setHSL(0.58 - 0.1 * t, 0.5 + t * 0.1, 0.42 + t * 0.08);
-  return color;
+  return start.lerp(end, t);
+}
+
+function applyMaterialSettingsToMeshes() {
+  const meshCount = isoGroup.children.length;
+  for (let i = 0; i < meshCount; i += 1) {
+    const mesh = isoGroup.children[i];
+    if (!(mesh.material instanceof THREE.ShaderMaterial)) {
+      continue;
+    }
+
+    mesh.material.uniforms.uBaseColor.value.copy(getIsosurfaceColor(i, meshCount));
+    mesh.material.uniforms.uFresnel.value = settings.fresnel;
+    mesh.material.uniforms.uSpecular.value = settings.specular;
+  }
 }
 
 function rebuildIsosurfaces() {
@@ -536,7 +634,6 @@ function rebuildIsosurfaces() {
     offset: settings.offset,
   });
 
-  const total = Math.max(surfaces.length - 1, 1);
   for (let i = 0; i < surfaces.length; i += 1) {
     let renderGeometry = surfaces[i].geometry;
     if (settings.subdivision > 0) {
@@ -547,11 +644,12 @@ function rebuildIsosurfaces() {
       }
     }
 
-    const layerFactor = i / total;
-    const material = createIsosurfaceMaterial(getIsosurfaceColor(i, surfaces.length), layerFactor);
+    const material = createIsosurfaceMaterial(getIsosurfaceColor(i, surfaces.length));
     const mesh = new THREE.Mesh(renderGeometry, material);
     isoGroup.add(mesh);
   }
+
+  applyMaterialSettingsToMeshes();
 }
 
 function scheduleRebuild() {
@@ -563,6 +661,170 @@ function scheduleRebuild() {
     rebuildTimer = null;
     rebuildIsosurfaces();
   }, 100);
+}
+
+function downloadBlob(filename, blob) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => {
+    URL.revokeObjectURL(url);
+  }, 0);
+}
+
+function getMeshBaseColor(mesh) {
+  if (mesh.material instanceof THREE.ShaderMaterial) {
+    const uniform = mesh.material.uniforms.uBaseColor;
+    if (uniform?.value instanceof THREE.Color) {
+      return uniform.value.clone();
+    }
+  }
+  return new THREE.Color(0xffffff);
+}
+
+function buildExportGroup() {
+  const group = new THREE.Group();
+  const ownedGeometries = [];
+  const ownedMaterials = [];
+
+  for (const child of isoGroup.children) {
+    if (!(child instanceof THREE.Mesh) || !(child.geometry instanceof THREE.BufferGeometry)) {
+      continue;
+    }
+
+    const geometry = child.geometry.clone();
+    geometry.applyMatrix4(child.matrixWorld);
+    const material = new THREE.MeshStandardMaterial({
+      color: getMeshBaseColor(child),
+      roughness: 0.35,
+      metalness: 0.1,
+      side: THREE.DoubleSide,
+    });
+
+    group.add(new THREE.Mesh(geometry, material));
+    ownedGeometries.push(geometry);
+    ownedMaterials.push(material);
+  }
+
+  return {
+    group,
+    dispose: () => {
+      for (const geometry of ownedGeometries) {
+        geometry.dispose();
+      }
+      for (const material of ownedMaterials) {
+        material.dispose();
+      }
+    },
+  };
+}
+
+function exportIsosurfacesAsObj() {
+  if (isoGroup.children.length === 0) {
+    return;
+  }
+
+  const lines = ['# Scalar Isosurface OBJ export'];
+  let vertexOffset = 1;
+
+  const worldPosition = new THREE.Vector3();
+  const worldNormal = new THREE.Vector3();
+  const normalMatrix = new THREE.Matrix3();
+
+  for (let meshIndex = 0; meshIndex < isoGroup.children.length; meshIndex += 1) {
+    const mesh = isoGroup.children[meshIndex];
+    if (!(mesh instanceof THREE.Mesh) || !(mesh.geometry instanceof THREE.BufferGeometry)) {
+      continue;
+    }
+
+    const position = mesh.geometry.getAttribute('position');
+    if (!(position instanceof THREE.BufferAttribute)) {
+      continue;
+    }
+
+    let normal = mesh.geometry.getAttribute('normal');
+    if (!(normal instanceof THREE.BufferAttribute)) {
+      mesh.geometry.computeVertexNormals();
+      normal = mesh.geometry.getAttribute('normal');
+    }
+    if (!(normal instanceof THREE.BufferAttribute)) {
+      continue;
+    }
+
+    normalMatrix.getNormalMatrix(mesh.matrixWorld);
+    lines.push(`o layer_${meshIndex + 1}`);
+
+    for (let i = 0; i < position.count; i += 1) {
+      worldPosition.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld);
+      lines.push(`v ${worldPosition.x.toFixed(6)} ${worldPosition.y.toFixed(6)} ${worldPosition.z.toFixed(6)}`);
+    }
+
+    for (let i = 0; i < normal.count; i += 1) {
+      worldNormal.fromBufferAttribute(normal, i).applyMatrix3(normalMatrix).normalize();
+      lines.push(`vn ${worldNormal.x.toFixed(6)} ${worldNormal.y.toFixed(6)} ${worldNormal.z.toFixed(6)}`);
+    }
+
+    const index = mesh.geometry.getIndex();
+    if (index) {
+      for (let i = 0; i < index.count; i += 3) {
+        const a = index.getX(i) + vertexOffset;
+        const b = index.getX(i + 1) + vertexOffset;
+        const c = index.getX(i + 2) + vertexOffset;
+        lines.push(`f ${a}//${a} ${b}//${b} ${c}//${c}`);
+      }
+    } else {
+      for (let i = 0; i < position.count; i += 3) {
+        const a = vertexOffset + i;
+        const b = vertexOffset + i + 1;
+        const c = vertexOffset + i + 2;
+        lines.push(`f ${a}//${a} ${b}//${b} ${c}//${c}`);
+      }
+    }
+
+    vertexOffset += position.count;
+  }
+
+  downloadBlob('isosurface.obj', new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' }));
+}
+
+const gltfExporter = new GLTFExporter();
+function exportIsosurfacesAsGlb() {
+  if (isoGroup.children.length === 0) {
+    return;
+  }
+
+  const { group, dispose } = buildExportGroup();
+  gltfExporter.parse(
+    group,
+    (result) => {
+      if (result instanceof ArrayBuffer) {
+        downloadBlob('isosurface.glb', new Blob([result], { type: 'model/gltf-binary' }));
+      } else {
+        console.error('GLB export expected ArrayBuffer output.');
+      }
+      dispose();
+    },
+    (error) => {
+      console.error('GLB export failed.', error);
+      dispose();
+    },
+    { binary: true, onlyVisible: true },
+  );
+}
+
+function exportScreenshot() {
+  composer.render();
+  renderer.domElement.toBlob((blob) => {
+    if (!blob) {
+      console.error('Screenshot export failed.');
+      return;
+    }
+    downloadBlob('isosurface.png', blob);
+  }, 'image/png');
 }
 
 bindRange(ui.xRes, ui.xResValue, (value) => `${Math.round(value)}`, (value) => {
@@ -600,6 +862,31 @@ bindRange(ui.subdivision, ui.subdivisionValue, (value) => `${Math.round(value)}`
   scheduleRebuild();
 });
 
+bindRange(ui.fresnel, ui.fresnelValue, (value) => `${value.toFixed(2)}`, (value) => {
+  settings.fresnel = value;
+  applyMaterialSettingsToMeshes();
+});
+
+bindRange(ui.specular, ui.specularValue, (value) => `${value.toFixed(2)}`, (value) => {
+  settings.specular = value;
+  applyMaterialSettingsToMeshes();
+});
+
+bindRange(ui.bloom, ui.bloomValue, (value) => `${value.toFixed(2)}`, (value) => {
+  settings.bloom = value;
+  bloomPass.strength = value;
+});
+
+ui.gradientStart.addEventListener('input', () => {
+  settings.gradientStart = ui.gradientStart.value;
+  applyMaterialSettingsToMeshes();
+});
+
+ui.gradientEnd.addEventListener('input', () => {
+  settings.gradientEnd = ui.gradientEnd.value;
+  applyMaterialSettingsToMeshes();
+});
+
 ui.clearAll.addEventListener('click', () => {
   points.length = 0;
   pointGroup.clear();
@@ -607,6 +894,10 @@ ui.clearAll.addEventListener('click', () => {
   updatePointCountLabel();
   scheduleRebuild();
 });
+
+ui.exportObj.addEventListener('click', exportIsosurfacesAsObj);
+ui.exportGlb.addEventListener('click', exportIsosurfacesAsGlb);
+ui.exportScreenshot.addEventListener('click', exportScreenshot);
 
 function setMouseFromEvent(event) {
   const rect = renderer.domElement.getBoundingClientRect();
