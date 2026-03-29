@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import GUI from 'lil-gui';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { generateIsosurfaces } from './isosurface/marchingCubes.js';
+import { subdivideCatmullClark } from './geometry/catmullClarkSubdivision.js';
 
 const app = document.querySelector('#app');
 
@@ -86,6 +87,7 @@ const settings = {
   isoValue: 0.55,
   amount: 1,
   offset: 0.08,
+  subdivision: 0,
   pointCount: 0,
   clearAll: () => {
     points.length = 0;
@@ -106,6 +108,7 @@ const surfaceFolder = gui.addFolder('Surface');
 surfaceFolder.add(settings, 'isoValue', 0.05, 3.0, 0.01).name('isoValue').onChange(scheduleRebuild);
 surfaceFolder.add(settings, 'amount', 1, 12, 1).name('Amount').onChange(scheduleRebuild);
 surfaceFolder.add(settings, 'offset', 0.0, 1.0, 0.01).name('offset').onChange(scheduleRebuild);
+surfaceFolder.add(settings, 'subdivision', 0, 2, 1).name('Subdivision').onChange(scheduleRebuild);
 surfaceFolder.open();
 
 const pointFolder = gui.addFolder('Points');
@@ -163,9 +166,18 @@ function rebuildIsosurfaces() {
   });
 
   for (let i = 0; i < surfaces.length; i += 1) {
+    let renderGeometry = surfaces[i].geometry;
+    if (settings.subdivision > 0) {
+      const subdivided = subdivideCatmullClark(renderGeometry, settings.subdivision);
+      if (subdivided !== renderGeometry) {
+        renderGeometry.dispose();
+        renderGeometry = subdivided;
+      }
+    }
+
     const material = isoMaterialTemplate.clone();
     material.color.copy(getIsosurfaceColor(i, surfaces.length));
-    const mesh = new THREE.Mesh(surfaces[i].geometry, material);
+    const mesh = new THREE.Mesh(renderGeometry, material);
     isoGroup.add(mesh);
   }
 }

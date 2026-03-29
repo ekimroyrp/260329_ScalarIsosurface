@@ -7,7 +7,8 @@
 - Interactive isosurface generation from Gaussian point-field contributions.
 - Independent X, Y, and Z grid resolution controls.
 - Adjustable iso value threshold for surface extraction.
-- Multi-surface extraction with `Amount` and per-surface `offset` controls.
+- Multi-surface extraction where `Amount` sets layer count and `offset` sets equal spacing between layers moving away from points.
+- Catmull-Clark subdivision smoothing with an integer `Subdivision` level control.
 - Left-click point placement on the box surface.
 - Right-drag orbit and middle-drag pan navigation.
 - Live point count and one-click clear operation.
@@ -30,4 +31,4 @@
 - `Right Mouse Drag`: Orbit camera.
 - `Middle Mouse Drag`: Pan camera.
 - `Mouse Wheel`: Zoom.
-- `GUI`: Set `X res`, `Y res`, `Z res`, `isoValue`, `Amount`, `offset`, and `Clear All` points.
+- `GUI`: Set `X res`, `Y res`, `Z res`, `isoValue`, `Amount`, `offset` (equal layer spacing), `Subdivision`, and `Clear All` points.
