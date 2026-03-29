@@ -18,6 +18,7 @@
 - Click an existing point to select it and move it with a translate gizmo.
 - `Delete` key support to remove the currently selected point.
 - Realtime isosurface regeneration while dragging selected points.
+- Shift-drag slice cuts with a camera-parallel cutting plane and stacked multi-cut support.
 - Right-drag orbit and middle-drag pan navigation.
 - Live point count and one-click clear operation.
 
@@ -38,6 +39,7 @@
 - `Left Click`: Select an existing point (shows move gizmo) or add a new point on box hit.
 - `Drag Gizmo Arrows`: Move the selected point in world space with live isosurface updates.
 - `Delete`: Remove selected point.
+- `Shift + Left Drag`: Draw a screen-space cut line to apply a camera-parallel slice that removes the side farther from box center; repeat to stack multiple cuts.
 - `Right Mouse Drag`: Orbit camera.
 - `Middle Mouse Drag`: Pan camera.
 - `Mouse Wheel`: Zoom.

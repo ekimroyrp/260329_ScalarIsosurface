@@ -6,6 +6,8 @@ import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
+import { Line2 } from 'three/examples/jsm/lines/Line2.js';
+import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
@@ -103,7 +105,7 @@ function buildControlPanel(initial) {
     </div>
 
     <div class="ui-body panel-sections">
-      <div class="control-hint">Wheel = Zoom, MMB = Pan, RMB = Orbit</div>
+      <div class="control-hint">Wheel = Zoom, MMB = Pan, RMB = Orbit, Shift+LMB Drag = Cut</div>
 
       <section class="panel-section">
         <div class="panel-section-header">
@@ -821,6 +823,7 @@ const bounds = {
   min: new THREE.Vector3(-1, -1, -1),
   max: new THREE.Vector3(1, 1, 1),
 };
+const boxCenter = new THREE.Vector3().addVectors(bounds.min, bounds.max).multiplyScalar(0.5);
 
 const boxSize = new THREE.Vector3().subVectors(bounds.max, bounds.min);
 const boxGeometry = new THREE.BoxGeometry(boxSize.x, boxSize.y, boxSize.z);
@@ -912,6 +915,36 @@ const clickMoveThresholdSq = 64;
 const sigma = 0.22;
 let rebuildTimer = null;
 let realtimeRebuildRequested = false;
+const activeCutPlanes = [];
+let cutGesture = null;
+
+const cutLineGeometry = new LineGeometry();
+cutLineGeometry.setPositions([0, 0, 0, 0, 0, 0]);
+const cutLineMaterial = new LineMaterial({
+  color: 0xffffff,
+  linewidth: 4.2,
+  transparent: true,
+  opacity: 0.96,
+  depthTest: false,
+  depthWrite: false,
+  toneMapped: false,
+});
+cutLineMaterial.resolution.set(window.innerWidth, window.innerHeight);
+const cutLine = new Line2(cutLineGeometry, cutLineMaterial);
+cutLine.computeLineDistances();
+cutLine.visible = false;
+cutLine.renderOrder = 90;
+scene.add(cutLine);
+
+const CLIP_EPSILON = 1e-5;
+const CUT_MIN_LINE_LENGTH_SQ = 1e-6;
+const triangleEdgeA = new THREE.Vector3();
+const triangleEdgeB = new THREE.Vector3();
+const triangleEdgeCross = new THREE.Vector3();
+const cutBoundsCorner = new THREE.Vector3();
+const cutDrawPlane = new THREE.Plane();
+const cutDrawPoint = new THREE.Vector3();
+const cutCameraDirection = new THREE.Vector3();
 
 function createSeededRandom(seed) {
   let state = seed >>> 0;
@@ -1052,6 +1085,159 @@ function applyMaterialSettingsToMeshes() {
   }
 }
 
+function computeTriangleAreaSquared(a, b, c) {
+  triangleEdgeA.subVectors(b, a);
+  triangleEdgeB.subVectors(c, a);
+  triangleEdgeCross.crossVectors(triangleEdgeA, triangleEdgeB);
+  return triangleEdgeCross.lengthSq() * 0.25;
+}
+
+function intersectCutEdge(a, b, distA, distB) {
+  const denominator = distA - distB;
+  let t = 0.5;
+  if (Math.abs(denominator) > 1e-8) {
+    t = distA / denominator;
+  }
+  t = THREE.MathUtils.clamp(t, 0, 1);
+  return a.clone().lerp(b, t);
+}
+
+function clipTriangleByPlaneHalfspace(a, b, c, plane, keepSign) {
+  const input = [a.clone(), b.clone(), c.clone()];
+  const output = [];
+
+  for (let i = 0; i < input.length; i += 1) {
+    const current = input[i];
+    const next = input[(i + 1) % input.length];
+    const currentDist = plane.distanceToPoint(current) * keepSign;
+    const nextDist = plane.distanceToPoint(next) * keepSign;
+    const currentInside = currentDist >= -CLIP_EPSILON;
+    const nextInside = nextDist >= -CLIP_EPSILON;
+
+    if (currentInside && nextInside) {
+      output.push(next.clone());
+    } else if (currentInside && !nextInside) {
+      output.push(intersectCutEdge(current, next, currentDist, nextDist));
+    } else if (!currentInside && nextInside) {
+      output.push(intersectCutEdge(current, next, currentDist, nextDist));
+      output.push(next.clone());
+    }
+  }
+
+  return output;
+}
+
+function classifyBoundingBoxAgainstCutPlane(box, plane, keepSign) {
+  let sawInside = false;
+  let sawOutside = false;
+
+  for (let ix = 0; ix <= 1; ix += 1) {
+    const x = ix === 0 ? box.min.x : box.max.x;
+    for (let iy = 0; iy <= 1; iy += 1) {
+      const y = iy === 0 ? box.min.y : box.max.y;
+      for (let iz = 0; iz <= 1; iz += 1) {
+        const z = iz === 0 ? box.min.z : box.max.z;
+        cutBoundsCorner.set(x, y, z);
+        const signedDistance = plane.distanceToPoint(cutBoundsCorner) * keepSign;
+        if (signedDistance >= -CLIP_EPSILON) {
+          sawInside = true;
+        } else {
+          sawOutside = true;
+        }
+
+        if (sawInside && sawOutside) {
+          return 0;
+        }
+      }
+    }
+  }
+
+  if (sawInside) {
+    return 1;
+  }
+  return -1;
+}
+
+function clipGeometryByCutPlane(geometry, cutPlaneState) {
+  if (!cutPlaneState || !(geometry instanceof THREE.BufferGeometry)) {
+    return geometry;
+  }
+
+  const { plane, keepSign } = cutPlaneState;
+  if (!geometry.boundingBox) {
+    geometry.computeBoundingBox();
+  }
+  if (geometry.boundingBox) {
+    const classification = classifyBoundingBoxAgainstCutPlane(geometry.boundingBox, plane, keepSign);
+    if (classification > 0) {
+      return geometry;
+    }
+    if (classification < 0) {
+      return null;
+    }
+  }
+
+  const position = geometry.getAttribute('position');
+  if (!(position instanceof THREE.BufferAttribute) || position.count < 3) {
+    return null;
+  }
+
+  const index = geometry.getIndex();
+  const clippedPositions = [];
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+
+  const triangleCount = index ? Math.floor(index.count / 3) : Math.floor(position.count / 3);
+  for (let tri = 0; tri < triangleCount; tri += 1) {
+    const base = tri * 3;
+    const aIndex = index ? index.getX(base) : base;
+    const bIndex = index ? index.getX(base + 1) : base + 1;
+    const cIndex = index ? index.getX(base + 2) : base + 2;
+
+    a.fromBufferAttribute(position, aIndex);
+    b.fromBufferAttribute(position, bIndex);
+    c.fromBufferAttribute(position, cIndex);
+
+    const polygon = clipTriangleByPlaneHalfspace(a, b, c, plane, keepSign);
+    if (polygon.length < 3) {
+      continue;
+    }
+
+    for (let i = 1; i < polygon.length - 1; i += 1) {
+      const v0 = polygon[0];
+      const v1 = polygon[i];
+      const v2 = polygon[i + 1];
+      if (computeTriangleAreaSquared(v0, v1, v2) <= 1e-12) {
+        continue;
+      }
+
+      clippedPositions.push(
+        v0.x,
+        v0.y,
+        v0.z,
+        v1.x,
+        v1.y,
+        v1.z,
+        v2.x,
+        v2.y,
+        v2.z,
+      );
+    }
+  }
+
+  if (clippedPositions.length === 0) {
+    return null;
+  }
+
+  const clippedGeometry = new THREE.BufferGeometry();
+  clippedGeometry.setAttribute('position', new THREE.Float32BufferAttribute(clippedPositions, 3));
+  clippedGeometry.computeVertexNormals();
+  clippedGeometry.computeBoundingBox();
+  clippedGeometry.computeBoundingSphere();
+  return clippedGeometry;
+}
+
 function rebuildIsosurfaces() {
   clearIsosurfaceMeshes();
   const allPoints = userPoints.concat(generatedPoints);
@@ -1079,6 +1265,24 @@ function rebuildIsosurfaces() {
         renderGeometry.dispose();
         renderGeometry = subdivided;
       }
+    }
+
+    for (let cutIndex = 0; cutIndex < activeCutPlanes.length; cutIndex += 1) {
+      const clipped = clipGeometryByCutPlane(renderGeometry, activeCutPlanes[cutIndex]);
+      if (clipped !== renderGeometry) {
+        renderGeometry.dispose();
+      }
+
+      if (!(clipped instanceof THREE.BufferGeometry)) {
+        renderGeometry = null;
+        break;
+      }
+
+      renderGeometry = clipped;
+    }
+
+    if (!(renderGeometry instanceof THREE.BufferGeometry)) {
+      continue;
     }
 
     const material = createIsosurfaceMaterial(getIsosurfaceColor(i, surfaces.length));
@@ -1358,6 +1562,9 @@ ui.clearAll.addEventListener('click', () => {
   generatedPoints.length = 0;
   pointGroup.clear();
   generatedPointGroup.clear();
+  activeCutPlanes.length = 0;
+  cutGesture = null;
+  cutLine.visible = false;
   settings.randomPoints = 0;
   ui.randomPoints.value = '0';
   ui.randomPointsValue.value = '0';
@@ -1376,16 +1583,140 @@ function setMouseFromEvent(event) {
   mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 }
 
-function addPointFromEvent(event) {
+function getBoxHitPointFromEvent(event, target = null) {
+  setMouseFromEvent(event);
+  raycaster.setFromCamera(mouse, camera);
+  const hits = raycaster.intersectObject(raycastBox, false);
+  if (hits.length === 0) {
+    return null;
+  }
+
+  if (target instanceof THREE.Vector3) {
+    target.copy(hits[0].point);
+    return target;
+  }
+
+  return hits[0].point.clone();
+}
+
+function getCutDrawPointFromEvent(event, target = null) {
   setMouseFromEvent(event);
   raycaster.setFromCamera(mouse, camera);
 
-  const hits = raycaster.intersectObject(raycastBox, false);
-  if (hits.length === 0) {
+  camera.getWorldDirection(cutCameraDirection).normalize();
+  cutDrawPlane.setFromNormalAndCoplanarPoint(cutCameraDirection, boxCenter);
+  if (!raycaster.ray.intersectPlane(cutDrawPlane, cutDrawPoint)) {
+    return null;
+  }
+
+  if (target instanceof THREE.Vector3) {
+    target.copy(cutDrawPoint);
+    return target;
+  }
+
+  return cutDrawPoint.clone();
+}
+
+function updateCutPreviewLine(start, end) {
+  cutLineGeometry.setPositions([start.x, start.y, start.z, end.x, end.y, end.z]);
+  cutLine.geometry.computeBoundingSphere();
+  cutLine.visible = true;
+}
+
+function clearCutPreviewLine() {
+  cutLine.visible = false;
+}
+
+function createCutPlaneFromLine(start, end) {
+  const lineDirection = end.clone().sub(start);
+  if (lineDirection.lengthSq() <= CUT_MIN_LINE_LENGTH_SQ) {
+    return null;
+  }
+  lineDirection.normalize();
+
+  const cameraDirection = new THREE.Vector3();
+  camera.getWorldDirection(cameraDirection).normalize();
+
+  const planeNormal = new THREE.Vector3().crossVectors(lineDirection, cameraDirection);
+  if (planeNormal.lengthSq() <= 1e-10) {
+    return null;
+  }
+  planeNormal.normalize();
+
+  const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(planeNormal, start);
+  let keepSign = Math.sign(plane.distanceToPoint(boxCenter));
+  if (keepSign === 0) {
+    keepSign = 1;
+  }
+
+  return { plane, keepSign };
+}
+
+function beginCutGesture(event) {
+  const startPoint = getCutDrawPointFromEvent(event);
+  if (!startPoint) {
     return false;
   }
 
-  const point = hits[0].point.clone();
+  cutGesture = {
+    pointerId: event.pointerId,
+    start: startPoint.clone(),
+    end: startPoint.clone(),
+  };
+  updateCutPreviewLine(cutGesture.start, cutGesture.end);
+
+  if (typeof renderer.domElement.setPointerCapture === 'function') {
+    renderer.domElement.setPointerCapture(event.pointerId);
+  }
+
+  return true;
+}
+
+function updateCutGesture(event) {
+  if (!cutGesture || event.pointerId !== cutGesture.pointerId) {
+    return;
+  }
+
+  const nextPoint = getCutDrawPointFromEvent(event, cutGesture.end);
+  if (!nextPoint) {
+    return;
+  }
+
+  updateCutPreviewLine(cutGesture.start, cutGesture.end);
+}
+
+function endCutGesture(event, cancelled = false) {
+  if (!cutGesture) {
+    return;
+  }
+
+  if (!cancelled && event.pointerId === cutGesture.pointerId) {
+    getCutDrawPointFromEvent(event, cutGesture.end);
+    const nextCutPlane = createCutPlaneFromLine(cutGesture.start, cutGesture.end);
+    if (nextCutPlane) {
+      activeCutPlanes.push(nextCutPlane);
+      rebuildNow();
+    }
+  }
+
+  const pointerId = cutGesture.pointerId;
+  cutGesture = null;
+  clearCutPreviewLine();
+
+  if (
+    typeof renderer.domElement.hasPointerCapture === 'function' &&
+    typeof renderer.domElement.releasePointerCapture === 'function' &&
+    renderer.domElement.hasPointerCapture(pointerId)
+  ) {
+    renderer.domElement.releasePointerCapture(pointerId);
+  }
+}
+
+function addPointFromEvent(event) {
+  const point = getBoxHitPointFromEvent(event);
+  if (!point) {
+    return false;
+  }
   userPoints.push(point);
 
   const marker = new THREE.Mesh(pointGeometry, pointMaterial);
@@ -1503,6 +1834,12 @@ renderer.domElement.addEventListener('pointerdown', (event) => {
     return;
   }
 
+  if (event.shiftKey) {
+    pointerDown = null;
+    beginCutGesture(event);
+    return;
+  }
+
   if (selectPointFromEvent(event)) {
     pointerDown = null;
     return;
@@ -1514,7 +1851,16 @@ renderer.domElement.addEventListener('pointerdown', (event) => {
   };
 });
 
+renderer.domElement.addEventListener('pointermove', (event) => {
+  updateCutGesture(event);
+});
+
 renderer.domElement.addEventListener('pointerup', (event) => {
+  if (event.button === 0 && cutGesture && event.pointerId === cutGesture.pointerId) {
+    endCutGesture(event, false);
+    return;
+  }
+
   if (event.button !== 0 || pointerDown === null) {
     return;
   }
@@ -1538,11 +1884,15 @@ renderer.domElement.addEventListener('pointerup', (event) => {
   clearPointSelection();
 });
 
-renderer.domElement.addEventListener('pointercancel', () => {
+renderer.domElement.addEventListener('pointercancel', (event) => {
+  endCutGesture(event, true);
   pointerDown = null;
 });
 
-renderer.domElement.addEventListener('pointerleave', () => {
+renderer.domElement.addEventListener('pointerleave', (event) => {
+  if (cutGesture && event.pointerId === cutGesture.pointerId) {
+    endCutGesture(event, true);
+  }
   pointerDown = null;
 });
 
@@ -1579,6 +1929,7 @@ function onResize() {
   bloomPass.setSize(width, height);
   updateFxaaResolution();
   boxEdgesMaterial.resolution.set(width, height);
+  cutLineMaterial.resolution.set(width, height);
   clampPanelToViewport();
 }
 
@@ -1619,6 +1970,9 @@ window.addEventListener('beforeunload', () => {
   selectedPointMaterial.dispose();
   generatedPointGeometry.dispose();
   generatedPointMaterial.dispose();
+
+  cutLine.geometry.dispose();
+  cutLine.material.dispose();
 
   boxEdges.geometry.dispose();
   boxEdges.material.dispose();
