@@ -162,10 +162,11 @@ function buildSignedDistanceField({
 
   const invSigmaSq = 1 / (sigma * sigma);
   const invTwoSigmaSq = 0.5 * invSigmaSq;
-  const maxIterations = 6;
-  const levelTolerance = 1e-4;
+  const maxIterations = 20;
+  const levelTolerance = 1e-5;
   const gradSqEpsilon = 1e-12;
-  const maxStepDistance = Math.max(stepX, stepY, stepZ) * 3;
+  const maxStepDistance = Math.max(stepX, stepY, stepZ) * 2;
+  const maxDistance = bounds.min.distanceTo(bounds.max);
   const evalResult = { value: 0, gx: 0, gy: 0, gz: 0 };
 
   for (let iz = 0; iz < nz; iz += 1) {
@@ -223,7 +224,9 @@ function buildSignedDistanceField({
 
         if (!converged || !Number.isFinite(distance)) {
           const gradMag = Math.sqrt(Math.max(firstGradSq, gradSqEpsilon));
-          distance = Math.abs(initialLevel) / gradMag;
+          distance = Math.min(Math.abs(initialLevel) / gradMag, maxDistance);
+        } else {
+          distance = Math.min(distance, maxDistance);
         }
 
         signedDistanceField[nodeIndex] = sign * distance;
@@ -232,6 +235,56 @@ function buildSignedDistanceField({
   }
 
   return signedDistanceField;
+}
+
+function smoothSignedDistanceField(field, nx, ny, nz, preserveBand, passes = 1) {
+  if (passes <= 0) {
+    return field;
+  }
+
+  const fieldIndex = (ix, iy, iz) => ix + nx * (iy + ny * iz);
+  let src = field;
+  let dst = new Float32Array(field.length);
+
+  for (let pass = 0; pass < passes; pass += 1) {
+    for (let iz = 0; iz < nz; iz += 1) {
+      for (let iy = 0; iy < ny; iy += 1) {
+        for (let ix = 0; ix < nx; ix += 1) {
+          const idx = fieldIndex(ix, iy, iz);
+          const center = src[idx];
+
+          if (
+            ix === 0 ||
+            iy === 0 ||
+            iz === 0 ||
+            ix === nx - 1 ||
+            iy === ny - 1 ||
+            iz === nz - 1 ||
+            Math.abs(center) <= preserveBand
+          ) {
+            dst[idx] = center;
+            continue;
+          }
+
+          const nX0 = src[fieldIndex(ix - 1, iy, iz)];
+          const nX1 = src[fieldIndex(ix + 1, iy, iz)];
+          const nY0 = src[fieldIndex(ix, iy - 1, iz)];
+          const nY1 = src[fieldIndex(ix, iy + 1, iz)];
+          const nZ0 = src[fieldIndex(ix, iy, iz - 1)];
+          const nZ1 = src[fieldIndex(ix, iy, iz + 1)];
+          const neighborAvg = (nX0 + nX1 + nY0 + nY1 + nZ0 + nZ1) / 6;
+
+          dst[idx] = center * 0.55 + neighborAvg * 0.45;
+        }
+      }
+    }
+
+    const temp = src;
+    src = dst;
+    dst = temp;
+  }
+
+  return src;
 }
 
 function polygonizeScalarField({
@@ -391,6 +444,12 @@ export function generateIsosurfaces({
     stepZ: scalarData.stepZ,
     baseIsoValue: isoValue,
   });
+  const voxelStep = Math.max(scalarData.stepX, scalarData.stepY, scalarData.stepZ);
+  const preserveBand = voxelStep * 1.5;
+  const useSmoothedDistanceField = isoOffset > preserveBand;
+  const workingDistanceField = useSmoothedDistanceField
+    ? smoothSignedDistanceField(distanceField, scalarData.nx, scalarData.ny, scalarData.nz, preserveBand, 1)
+    : distanceField;
   const surfaces = [];
 
   for (let i = 0; i < count; i += 1) {
@@ -399,7 +458,7 @@ export function generateIsosurfaces({
       bounds,
       resolution,
       isoValue: currentIsoDistance,
-      scalarField: distanceField,
+      scalarField: workingDistanceField,
       nx: scalarData.nx,
       ny: scalarData.ny,
       stepX: scalarData.stepX,
