@@ -1,6 +1,7 @@
 import './styles.css';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
@@ -493,6 +494,155 @@ controls.mouseButtons = {
 };
 controls.update();
 
+const transformControls = new TransformControls(camera, renderer.domElement);
+transformControls.setMode('translate');
+transformControls.setSpace('world');
+transformControls.size = 0.43;
+const transformHelper = transformControls.getHelper();
+transformHelper.visible = false;
+scene.add(transformHelper);
+
+function axisIndexFromHandleName(name) {
+  if (name === 'X') {
+    return 0;
+  }
+  if (name === 'Y') {
+    return 1;
+  }
+  if (name === 'Z') {
+    return 2;
+  }
+  return -1;
+}
+
+function handleAxisCenter(handle, axisIndex) {
+  const geometry = handle.geometry;
+  if (!geometry || typeof geometry.computeBoundingBox !== 'function') {
+    return 0;
+  }
+
+  if (!geometry.boundingBox) {
+    geometry.computeBoundingBox();
+  }
+
+  const box = geometry.boundingBox;
+  if (!box) {
+    return 0;
+  }
+
+  if (axisIndex === 0) {
+    return (box.min.x + box.max.x) * 0.5;
+  }
+  if (axisIndex === 1) {
+    return (box.min.y + box.max.y) * 0.5;
+  }
+  return (box.min.z + box.max.z) * 0.5;
+}
+
+function handleAxisExtent(handle, axisIndex) {
+  const geometry = handle.geometry;
+  if (!geometry || typeof geometry.computeBoundingBox !== 'function') {
+    return 0;
+  }
+
+  if (!geometry.boundingBox) {
+    geometry.computeBoundingBox();
+  }
+
+  const box = geometry.boundingBox;
+  if (!box) {
+    return 0;
+  }
+
+  if (axisIndex === 0) {
+    return box.max.x - box.min.x;
+  }
+  if (axisIndex === 1) {
+    return box.max.y - box.min.y;
+  }
+  return box.max.z - box.min.z;
+}
+
+function pruneTranslateHandles(group, { keepPositiveOnly, arrowsOnly }) {
+  const removeByName = new Set(['XY', 'YZ', 'XZ', 'XYZ', 'XYZE', 'E', 'AXIS', 'START', 'END', 'DELTA']);
+
+  for (const child of [...group.children]) {
+    if (removeByName.has(child.name)) {
+      group.remove(child);
+      continue;
+    }
+
+    const axisIndex = axisIndexFromHandleName(child.name);
+    if (axisIndex === -1) {
+      continue;
+    }
+
+    const center = handleAxisCenter(child, axisIndex);
+    if (keepPositiveOnly && center < -1e-5) {
+      group.remove(child);
+      continue;
+    }
+
+    if (arrowsOnly) {
+      const extent = handleAxisExtent(child, axisIndex);
+      if (extent > 0.26) {
+        group.remove(child);
+      }
+    }
+  }
+}
+
+function configureTransformControlsVisuals() {
+  const gizmo = transformControls._gizmo;
+  if (!gizmo) {
+    return;
+  }
+
+  const translateGizmo = gizmo.gizmo?.translate;
+  if (translateGizmo) {
+    pruneTranslateHandles(translateGizmo, {
+      keepPositiveOnly: true,
+      arrowsOnly: false,
+    });
+  }
+
+  const translatePicker = gizmo.picker?.translate;
+  if (translatePicker) {
+    pruneTranslateHandles(translatePicker, {
+      keepPositiveOnly: true,
+      arrowsOnly: false,
+    });
+  }
+
+  const translateHelper = gizmo.helper?.translate;
+  if (translateHelper) {
+    for (const child of [...translateHelper.children]) {
+      translateHelper.remove(child);
+    }
+  }
+}
+
+configureTransformControlsVisuals();
+
+let isTransformDragging = false;
+let isPointerOverGizmo = false;
+let selectedPointIndex = -1;
+transformControls.addEventListener('dragging-changed', (event) => {
+  isTransformDragging = Boolean(event.value);
+  controls.enabled = !event.value;
+  if (event.value) {
+    pointerDown = null;
+  } else {
+    scheduleRebuild();
+  }
+});
+transformControls.addEventListener('hoveron', () => {
+  isPointerOverGizmo = true;
+});
+transformControls.addEventListener('hoveroff', () => {
+  isPointerOverGizmo = false;
+});
+
 renderer.domElement.addEventListener('contextmenu', (event) => {
   event.preventDefault();
 });
@@ -575,20 +725,86 @@ scene.add(pointGroup);
 
 const pointGeometry = new THREE.SphereGeometry(0.045, 16, 12);
 const pointMaterial = new THREE.MeshStandardMaterial({
-  color: 0xdd6f3f,
-  emissive: 0x4f1f0e,
-  emissiveIntensity: 0.6,
+  color: 0xe37200,
+  emissive: 0xb53a00,
+  emissiveIntensity: 0.78,
+  roughness: 0.38,
+  metalness: 0.12,
+});
+const selectedPointMaterial = new THREE.MeshStandardMaterial({
+  color: 0xff8a00,
+  emissive: 0xff4a00,
+  emissiveIntensity: 0.95,
   roughness: 0.38,
   metalness: 0.12,
 });
 
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
+const projectedPoint = new THREE.Vector3();
 
 let pointerDown = null;
-const clickMoveThresholdSq = 16;
+const clickMoveThresholdSq = 64;
 const sigma = 0.22;
 let rebuildTimer = null;
+let realtimeRebuildRequested = false;
+
+function refreshPointMarkerMaterials() {
+  for (let i = 0; i < pointGroup.children.length; i += 1) {
+    const marker = pointGroup.children[i];
+    if (!(marker instanceof THREE.Mesh)) {
+      continue;
+    }
+
+    marker.material = i === selectedPointIndex ? selectedPointMaterial : pointMaterial;
+  }
+}
+
+function clearPointSelection() {
+  selectedPointIndex = -1;
+  transformControls.detach();
+  transformHelper.visible = false;
+  refreshPointMarkerMaterials();
+}
+
+function selectPointByIndex(index) {
+  if (index < 0 || index >= pointGroup.children.length) {
+    clearPointSelection();
+    return false;
+  }
+
+  const marker = pointGroup.children[index];
+  if (!(marker instanceof THREE.Object3D)) {
+    clearPointSelection();
+    return false;
+  }
+
+  selectedPointIndex = index;
+  transformControls.attach(marker);
+  transformHelper.visible = true;
+  refreshPointMarkerMaterials();
+  return true;
+}
+
+function syncSelectedPointFromMarker() {
+  if (selectedPointIndex < 0 || selectedPointIndex >= points.length) {
+    return;
+  }
+
+  const marker = pointGroup.children[selectedPointIndex];
+  if (!(marker instanceof THREE.Object3D)) {
+    return;
+  }
+
+  points[selectedPointIndex].copy(marker.position);
+  if (isTransformDragging) {
+    realtimeRebuildRequested = true;
+  } else {
+    scheduleRebuild();
+  }
+}
+
+transformControls.addEventListener('objectChange', syncSelectedPointFromMarker);
 
 function updatePointCountLabel() {
   ui.pointCountValue.textContent = String(settings.pointCount);
@@ -673,6 +889,15 @@ function scheduleRebuild() {
     rebuildTimer = null;
     rebuildIsosurfaces();
   }, 100);
+}
+
+function rebuildNow() {
+  if (rebuildTimer !== null) {
+    clearTimeout(rebuildTimer);
+    rebuildTimer = null;
+  }
+
+  rebuildIsosurfaces();
 }
 
 function downloadBlob(filename, blob) {
@@ -905,6 +1130,7 @@ ui.gradientEnd.addEventListener('input', () => {
 });
 
 ui.clearAll.addEventListener('click', () => {
+  clearPointSelection();
   points.length = 0;
   pointGroup.clear();
   settings.pointCount = 0;
@@ -928,7 +1154,7 @@ function addPointFromEvent(event) {
 
   const hits = raycaster.intersectObject(raycastBox, false);
   if (hits.length === 0) {
-    return;
+    return false;
   }
 
   const point = hits[0].point.clone();
@@ -936,15 +1162,123 @@ function addPointFromEvent(event) {
 
   const marker = new THREE.Mesh(pointGeometry, pointMaterial);
   marker.position.copy(point);
+  marker.userData.pointIndex = points.length - 1;
   pointGroup.add(marker);
 
   settings.pointCount = points.length;
   updatePointCountLabel();
+  selectPointByIndex(points.length - 1);
   scheduleRebuild();
+  return true;
+}
+
+function removePointAtIndex(index) {
+  if (!Number.isInteger(index) || index < 0 || index >= points.length) {
+    return false;
+  }
+
+  clearPointSelection();
+  points.splice(index, 1);
+
+  const marker = pointGroup.children[index];
+  if (marker) {
+    pointGroup.remove(marker);
+  }
+
+  for (let i = 0; i < pointGroup.children.length; i += 1) {
+    const child = pointGroup.children[i];
+    child.userData.pointIndex = i;
+  }
+
+  settings.pointCount = points.length;
+  updatePointCountLabel();
+
+  if (points.length > 0) {
+    selectPointByIndex(Math.min(index, points.length - 1));
+  }
+
+  scheduleRebuild();
+  return true;
+}
+
+function findNearestPointIndexFromScreen(event, maxPixelDistance = 18) {
+  if (pointGroup.children.length === 0) {
+    return -1;
+  }
+
+  const rect = renderer.domElement.getBoundingClientRect();
+  let bestIndex = -1;
+  let bestDistanceSq = maxPixelDistance * maxPixelDistance;
+
+  for (let i = 0; i < pointGroup.children.length; i += 1) {
+    const marker = pointGroup.children[i];
+    if (!(marker instanceof THREE.Object3D)) {
+      continue;
+    }
+
+    projectedPoint.copy(marker.position).project(camera);
+    if (projectedPoint.z < -1 || projectedPoint.z > 1) {
+      continue;
+    }
+
+    const sx = rect.left + (projectedPoint.x * 0.5 + 0.5) * rect.width;
+    const sy = rect.top + (-projectedPoint.y * 0.5 + 0.5) * rect.height;
+    const dx = event.clientX - sx;
+    const dy = event.clientY - sy;
+    const distanceSq = dx * dx + dy * dy;
+
+    if (distanceSq < bestDistanceSq) {
+      bestDistanceSq = distanceSq;
+      bestIndex = i;
+    }
+  }
+
+  return bestIndex;
+}
+
+function selectPointFromEvent(event) {
+  if (pointGroup.children.length === 0) {
+    return false;
+  }
+
+  setMouseFromEvent(event);
+  raycaster.setFromCamera(mouse, camera);
+
+  const hits = raycaster.intersectObjects(pointGroup.children, false);
+  if (hits.length > 0) {
+    const hitObject = hits[0].object;
+    const byObjectIndex = pointGroup.children.indexOf(hitObject);
+    if (byObjectIndex >= 0) {
+      hitObject.userData.pointIndex = byObjectIndex;
+      return selectPointByIndex(byObjectIndex);
+    }
+
+    const userDataIndex = Number(hitObject.userData.pointIndex);
+    if (Number.isInteger(userDataIndex)) {
+      return selectPointByIndex(userDataIndex);
+    }
+  }
+
+  const nearestIndex = findNearestPointIndexFromScreen(event);
+  if (nearestIndex >= 0) {
+    return selectPointByIndex(nearestIndex);
+  }
+
+  return false;
 }
 
 renderer.domElement.addEventListener('pointerdown', (event) => {
   if (event.button !== 0) {
+    return;
+  }
+
+  if (isTransformDragging || isPointerOverGizmo) {
+    pointerDown = null;
+    return;
+  }
+
+  if (selectPointFromEvent(event)) {
+    pointerDown = null;
     return;
   }
 
@@ -967,7 +1301,15 @@ renderer.domElement.addEventListener('pointerup', (event) => {
     return;
   }
 
-  addPointFromEvent(event);
+  if (isTransformDragging || isPointerOverGizmo) {
+    return;
+  }
+
+  if (addPointFromEvent(event)) {
+    return;
+  }
+
+  clearPointSelection();
 });
 
 renderer.domElement.addEventListener('pointercancel', () => {
@@ -976,6 +1318,26 @@ renderer.domElement.addEventListener('pointercancel', () => {
 
 renderer.domElement.addEventListener('pointerleave', () => {
   pointerDown = null;
+});
+
+window.addEventListener('keydown', (event) => {
+  if (event.key !== 'Delete') {
+    return;
+  }
+
+  const activeElement = document.activeElement;
+  if (
+    activeElement instanceof HTMLInputElement ||
+    activeElement instanceof HTMLTextAreaElement ||
+    activeElement instanceof HTMLSelectElement ||
+    activeElement?.isContentEditable
+  ) {
+    return;
+  }
+
+  if (removePointAtIndex(selectedPointIndex)) {
+    event.preventDefault();
+  }
 });
 
 function onResize() {
@@ -999,6 +1361,10 @@ window.addEventListener('resize', onResize);
 let animationFrame = 0;
 function renderLoop() {
   animationFrame = requestAnimationFrame(renderLoop);
+  if (realtimeRebuildRequested) {
+    realtimeRebuildRequested = false;
+    rebuildNow();
+  }
   controls.update();
   composer.render();
 }
@@ -1018,10 +1384,13 @@ window.addEventListener('beforeunload', () => {
   }
 
   controls.dispose();
+  transformControls.dispose();
+  scene.remove(transformHelper);
   clearIsosurfaceMeshes();
 
   pointGeometry.dispose();
   pointMaterial.dispose();
+  selectedPointMaterial.dispose();
 
   boxEdges.geometry.dispose();
   boxEdges.material.dispose();

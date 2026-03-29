@@ -14,6 +14,9 @@
 - Material panel controls for layer gradient (`Gradient Start` to `Gradient End`), Fresnel, Specular, and Bloom.
 - Export tools for `OBJ`, `GLB`, and `Screenshot` output.
 - Left-click point placement on the box surface.
+- Click an existing point to select it and move it with a translate gizmo.
+- `Delete` key support to remove the currently selected point.
+- Realtime isosurface regeneration while dragging selected points.
 - Right-drag orbit and middle-drag pan navigation.
 - Live point count and one-click clear operation.
 
@@ -31,7 +34,9 @@
 
 ## Controls
 
-- `Left Click`: Add a scalar source point where the ray hits the box.
+- `Left Click`: Select an existing point (shows move gizmo) or add a new point on box hit.
+- `Drag Gizmo Arrows`: Move the selected point in world space with live isosurface updates.
+- `Delete`: Remove selected point.
 - `Right Mouse Drag`: Orbit camera.
 - `Middle Mouse Drag`: Pan camera.
 - `Mouse Wheel`: Zoom.
