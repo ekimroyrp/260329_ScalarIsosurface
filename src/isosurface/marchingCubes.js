@@ -237,12 +237,36 @@ function buildSignedDistanceField({
   return signedDistanceField;
 }
 
-function smoothSignedDistanceField(field, nx, ny, nz, preserveBand, passes = 1) {
+function smoothSignedDistanceField(
+  field,
+  nx,
+  ny,
+  nz,
+  preserveBand,
+  passes = 1,
+  preserveLevels = null,
+  blend = 0.45,
+) {
   if (passes <= 0) {
     return field;
   }
 
+  const shouldPreserveValue = (value) => {
+    if (!preserveLevels || preserveLevels.length === 0) {
+      return Math.abs(value) <= preserveBand;
+    }
+
+    for (let i = 0; i < preserveLevels.length; i += 1) {
+      if (Math.abs(value - preserveLevels[i]) <= preserveBand) {
+        return true;
+      }
+    }
+
+    return false;
+  };
+
   const fieldIndex = (ix, iy, iz) => ix + nx * (iy + ny * iz);
+  const blendClamped = Math.max(0, Math.min(1, blend));
   let src = field;
   let dst = new Float32Array(field.length);
 
@@ -260,7 +284,7 @@ function smoothSignedDistanceField(field, nx, ny, nz, preserveBand, passes = 1) 
             ix === nx - 1 ||
             iy === ny - 1 ||
             iz === nz - 1 ||
-            Math.abs(center) <= preserveBand
+            shouldPreserveValue(center)
           ) {
             dst[idx] = center;
             continue;
@@ -274,7 +298,7 @@ function smoothSignedDistanceField(field, nx, ny, nz, preserveBand, passes = 1) 
           const nZ1 = src[fieldIndex(ix, iy, iz + 1)];
           const neighborAvg = (nX0 + nX1 + nY0 + nY1 + nZ0 + nZ1) / 6;
 
-          dst[idx] = center * 0.55 + neighborAvg * 0.45;
+          dst[idx] = center + (neighborAvg - center) * blendClamped;
         }
       }
     }
@@ -422,6 +446,7 @@ export function generateIsosurfaces({
   sigma,
   amount,
   offset,
+  smoothing = 0,
 }) {
   const { x: xRes, y: yRes, z: zRes } = resolution;
   if (points.length === 0 || xRes < 1 || yRes < 1 || zRes < 1) {
@@ -445,11 +470,31 @@ export function generateIsosurfaces({
     baseIsoValue: isoValue,
   });
   const voxelStep = Math.max(scalarData.stepX, scalarData.stepY, scalarData.stepZ);
-  const preserveBand = voxelStep * 1.5;
-  const useSmoothedDistanceField = isoOffset > preserveBand;
-  const workingDistanceField = useSmoothedDistanceField
-    ? smoothSignedDistanceField(distanceField, scalarData.nx, scalarData.ny, scalarData.nz, preserveBand, 1)
-    : distanceField;
+  let preserveBand = voxelStep * 0.2;
+  if (isoOffset > EPSILON) {
+    preserveBand = Math.min(preserveBand, isoOffset * 0.45);
+  }
+  preserveBand = Math.max(preserveBand, voxelStep * 0.03);
+  const smoothingLevel = Math.max(0, Math.floor(Number(smoothing) || 0));
+  const smoothingPasses = smoothingLevel * 2;
+  const smoothingBlend = Math.min(0.82, 0.35 + smoothingLevel * 0.15);
+  const preserveLevels = new Float32Array(count);
+  for (let i = 0; i < count; i += 1) {
+    preserveLevels[i] = -i * isoOffset;
+  }
+  const workingDistanceField =
+    smoothingPasses > 0
+      ? smoothSignedDistanceField(
+          distanceField,
+          scalarData.nx,
+          scalarData.ny,
+          scalarData.nz,
+          preserveBand,
+          smoothingPasses,
+          preserveLevels,
+          smoothingBlend,
+        )
+      : distanceField;
   const surfaces = [];
 
   for (let i = 0; i < count; i += 1) {

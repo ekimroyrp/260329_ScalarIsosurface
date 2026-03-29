@@ -12,7 +12,6 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader.js';
 import { generateIsosurfaces } from './isosurface/marchingCubes.js';
 import { subdivideCatmullClark } from './geometry/catmullClarkSubdivision.js';
-import { laplacianSmooth } from './geometry/laplacianSmoothing.js';
 
 const ISOSURFACE_VERTEX_SHADER = `
   varying vec3 vWorldPos;
@@ -143,7 +142,7 @@ function buildControlPanel(initial) {
         <div class="panel-section-content panel-controls-stack">
           <label class="control">
             <div class="control-row">
-              <span>isoValue</span>
+              <span>IsoValue</span>
               <span id="iso-value-value">${initial.isoValue.toFixed(2)}</span>
             </div>
             <input type="range" id="iso-value" min="0.05" max="3.0" step="0.01" value="${initial.isoValue}" />
@@ -154,12 +153,12 @@ function buildControlPanel(initial) {
               <span>Amount</span>
               <span id="amount-value">${initial.amount}</span>
             </div>
-            <input type="range" id="amount" min="1" max="12" step="1" value="${initial.amount}" />
+            <input type="range" id="amount" min="1" max="20" step="1" value="${initial.amount}" />
           </label>
 
           <label class="control">
             <div class="control-row">
-              <span>offset</span>
+              <span>Offset</span>
               <span id="offset-value">${initial.offset.toFixed(2)}</span>
             </div>
             <input type="range" id="offset" min="0" max="1" step="0.01" value="${initial.offset}" />
@@ -170,7 +169,7 @@ function buildControlPanel(initial) {
               <span>Subdivision</span>
               <span id="subdivision-value">${initial.subdivision}</span>
             </div>
-            <input type="range" id="subdivision" min="0" max="2" step="1" value="${initial.subdivision}" />
+            <input type="range" id="subdivision" min="0" max="3" step="1" value="${initial.subdivision}" />
           </label>
 
           <label class="control">
@@ -327,19 +326,19 @@ function bindRange(input, valueEl, format, onInput) {
 }
 
 const settings = {
-  xRes: 24,
-  yRes: 24,
-  zRes: 24,
+  xRes: 15,
+  yRes: 15,
+  zRes: 15,
   isoValue: 0.55,
   amount: 1,
   offset: 0.08,
-  subdivision: 0,
-  smoothing: 0,
-  gradientStart: '#7eafd0',
-  gradientEnd: '#7ce7de',
-  fresnel: 0.48,
+  subdivision: 1,
+  smoothing: 2,
+  gradientStart: '#febee0',
+  gradientEnd: '#7af0ff',
+  fresnel: 0.1,
   specular: 0.42,
-  bloom: 0.34,
+  bloom: 0,
   pointCount: 0,
 };
 
@@ -589,8 +588,6 @@ const mouse = new THREE.Vector2();
 let pointerDown = null;
 const clickMoveThresholdSq = 16;
 const sigma = 0.22;
-const SMOOTHING_VERTEX_LIMIT = 120000;
-const SMOOTHING_VERTEX_ITERATION_BUDGET = 240000;
 let rebuildTimer = null;
 
 function updatePointCountLabel() {
@@ -631,26 +628,6 @@ function applyMaterialSettingsToMeshes() {
   }
 }
 
-function getEffectiveSmoothingIterations(geometry, requestedIterations) {
-  const requested = Math.max(0, Math.floor(requestedIterations));
-  if (requested === 0) {
-    return 0;
-  }
-
-  const position = geometry.getAttribute('position');
-  const vertexCount = position ? position.count : 0;
-  if (vertexCount <= 0 || vertexCount > SMOOTHING_VERTEX_LIMIT) {
-    return 0;
-  }
-
-  const byBudget = Math.floor(SMOOTHING_VERTEX_ITERATION_BUDGET / vertexCount);
-  if (byBudget <= 0) {
-    return 0;
-  }
-
-  return Math.min(requested, byBudget);
-}
-
 function rebuildIsosurfaces() {
   clearIsosurfaceMeshes();
 
@@ -666,6 +643,7 @@ function rebuildIsosurfaces() {
     sigma,
     amount: settings.amount,
     offset: settings.offset,
+    smoothing: settings.smoothing,
   });
 
   for (let i = 0; i < surfaces.length; i += 1) {
@@ -675,15 +653,6 @@ function rebuildIsosurfaces() {
       if (subdivided !== renderGeometry) {
         renderGeometry.dispose();
         renderGeometry = subdivided;
-      }
-    }
-    const smoothingIterations =
-      settings.subdivision > 0 ? getEffectiveSmoothingIterations(renderGeometry, settings.smoothing) : 0;
-    if (smoothingIterations > 0) {
-      const smoothed = laplacianSmooth(renderGeometry, smoothingIterations, 0.5);
-      if (smoothed !== renderGeometry) {
-        renderGeometry.dispose();
-        renderGeometry = smoothed;
       }
     }
 
@@ -905,16 +874,10 @@ bindRange(ui.subdivision, ui.subdivisionValue, (value) => `${Math.round(value)}`
   scheduleRebuild();
 });
 
-const updateSmoothingUi = () => {
-  const value = Math.round(Number.parseFloat(ui.smoothing.value));
-  settings.smoothing = value;
-  ui.smoothingValue.textContent = `${value}`;
-  updateRangeProgress(ui.smoothing);
-};
-ui.smoothing.addEventListener('input', updateSmoothingUi);
-ui.smoothing.addEventListener('change', scheduleRebuild);
-ui.smoothing.addEventListener('pointerup', scheduleRebuild);
-updateSmoothingUi();
+bindRange(ui.smoothing, ui.smoothingValue, (value) => `${Math.round(value)}`, (value) => {
+  settings.smoothing = Math.round(value);
+  scheduleRebuild();
+});
 
 bindRange(ui.fresnel, ui.fresnelValue, (value) => `${value.toFixed(2)}`, (value) => {
   settings.fresnel = value;
