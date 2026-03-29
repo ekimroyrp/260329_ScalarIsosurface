@@ -1,57 +1,50 @@
 # 260329_ScalarIsosurface
 
-260329_ScalarIsosurface is an interactive Three.js tool for generating a 3D scalar-field isosurface inside a bounded box using user-placed source points and a CPU marching-cubes mesh extraction pipeline with independent X/Y/Z grid resolution controls.
+260329_ScalarIsosurface is an interactive Three.js scalar-field sandbox that generates layered isosurfaces from point sources inside a resizable 3D boundary box. It uses a CPU marching-cubes pipeline with independent axis resolution, supports realtime point editing/simulation/cutting, and includes a styled material and export workflow for fast form iteration.
 
 ## Features
 
-- Interactive isosurface generation from Gaussian point-field contributions.
-- Independent X, Y, and Z grid resolution controls.
-- Independent boundary size controls (`Size X`, `Size Y`, `Size Z`) for resizing the scalar domain box.
-- Adjustable iso value threshold for surface extraction.
-- Multi-surface extraction where `Layers` sets layer count and `Offset` sets equal spacing between layers moving away from points, using a smooth signed-distance projection field.
-- `Thickness` slider for per-layer shell thickness, generating true thickened geometry.
-- Catmull-Clark subdivision smoothing with an integer `Subdivision` level control.
-- Volumetric `Smoothing` control that filters the signed-distance field before meshing, preserving target layer levels while reducing noisy artifacts.
-- DifferentialGrowth-inspired visual style with dark atmospheric environment, custom shader shading, bloom, and glassmorphism panel UI.
-- Material panel controls for layer gradient (`Gradient Start` to `Gradient End`), Fresnel, Specular, and Bloom.
-- Slider values are directly editable via inline numeric fields (no spinner arrows), with min/max/step clamping.
-- Export tools for `OBJ`, `GLB`, and `Screenshot` output.
-- Left-click point placement on the box surface.
-- Click an existing point to select it and move it with a translate gizmo.
-- `Delete` key support to remove the currently selected point.
-- Realtime isosurface regeneration while dragging selected points.
-- Top `Simulation` panel with `Start`/`Pause`, `Reset`, timeline scrubbing, and `Simulation Rate`.
-- Runtime point simulation that moves all points in randomized bounded wandering orbits with realtime mesh updates inside an invisible travel bounds box scaled to `1.25x` the grid domain.
-- Simulation lock mode that disables point add/select/move/delete while running.
-- Shift-drag slice cuts with a camera-parallel cutting plane and stacked multi-cut support.
-- Right-drag orbit and middle-drag pan navigation.
-- Custom and random point workflows with one-click custom-point clearing.
+- Gaussian scalar-field accumulation from custom points and seeded random points.
+- Resizable boundary domain with `Size X`, `Size Y`, and `Size Z` plus independent `X/Y/Z Resolution` controls.
+- Layered surface extraction with `IsoValue`, `Layers`, and equal-step `Offset` spacing away from points.
+- Per-layer shell generation via `Thickness`, including corrected outward shell normals.
+- Post-mesh shaping controls with integer `Subdivision` (Catmull-Clark) and volumetric `Smoothing`.
+- Realtime interaction loop: add/select/move/delete points and see live isosurface updates.
+- Built-in point simulation (`Start/Pause`, `Reset`, timeline scrub, `Simulation Rate`) with bounded wandering motion.
+- Shift+LMB multi-cut tool with camera-parallel cut planes and `Clear IsoSurface Cuts`.
+- Visibility toggles for `Show Boundary`, `Show IsoSurface`, and `Show Points`.
+- Material styling controls for gradient (`Gradient Start` to `Gradient End`), `Fresnel`, `Specular`, and `Bloom`.
+- Export tools for `OBJ`, `GLB`, and screenshots; exports include current thickened geometry and color data.
+- DifferentialGrowth-inspired dark UI/environment styling with editable numeric fields for precise control.
 
 ## Getting Started
 
-1. Install dependencies:
-   ```bash
-   npm install
-   ```
-2. Run the development server:
-   ```bash
-   npm run dev
-   ```
-3. Open the local URL shown by Vite in your browser.
+1. `npm install`
+2. `npm run dev` to start Vite and open the local URL shown in the terminal
+3. `npm run build` to generate a production bundle in `dist/`
+4. `npm run preview` to inspect the production build locally
 
 ## Controls
 
-- `Left Click`: Select an existing point (shows move gizmo) or add a new point on box hit.
-- `Drag Gizmo Arrows`: Move the selected point in world space with live isosurface updates.
-- `Delete`: Remove selected point.
-- `Start / Pause`: Starts or pauses realtime point wandering simulation.
-- `Simulation Rate`: Controls movement speed during simulation.
-- `Simulation Timeline`: Integer step timeline that can be scrubbed while paused.
-- `Reset` (Simulation): Resets simulated points back to their base positions.
-- `Shift + Left Drag`: Draw a screen-space cut line to apply a camera-parallel slice that removes the side farther from box center; repeat to stack multiple cuts.
+- `Left Click`: Select an existing custom point (shows move gizmo) or add a new custom point on boundary hit.
+- `Drag Gizmo Arrows`: Move the selected custom point in world space with realtime mesh updates.
+- `Delete`: Remove the selected custom point.
+- `Shift + Left Drag`: Draw a cut line in screen space to add a camera-parallel cut plane; cuts stack until cleared.
 - `Right Mouse Drag`: Orbit camera.
 - `Middle Mouse Drag`: Pan camera.
-- `Mouse Wheel`: Zoom.
-- `UI Panel`: Set `Size X`, `Size Y`, `Size Z`, `X Resolution`, `Y Resolution`, `Z Resolution`, `IsoValue`, `Layers`, `Offset` (equal layer spacing), `Subdivision`, `Smoothing`, `Thickness`, `Gradient Start`, `Gradient End`, `Fresnel`, `Specular`, `Bloom`, and `Clear Custom Points`.
-- `Numeric Inputs`: Click value fields to type exact numbers; values snap to each control's step and limits.
-- `Export`: Download generated geometry as `OBJ` or `GLB`, or save a `Screenshot`.
+- `Mouse Wheel`: Zoom camera.
+- `Start / Pause`: Start or pause point simulation (editing is locked while running).
+- `Reset` (Simulation): Return simulated points to their base positions and reset timeline.
+- `Simulation Timeline`: Scrub integer simulation steps while paused.
+- `UI Panel`: Adjust boundary size/resolution, isosurface shaping, point/random-point controls, material controls, and export actions.
+- `Clear Custom Points`: Remove all manually added custom points.
+- `Clear IsoSurface Cuts`: Remove all active cut planes.
+- `Show Boundary / Show IsoSurface / Show Points`: Toggle visual visibility of each subsystem.
+- `Numeric Inputs`: Type values directly; fields are clamped/snapped to each control's min/max/step.
+- `Export`: Save `OBJ`, `GLB`, or `Screenshot` from the current scene state.
+
+## Deployment
+
+- **Local production preview:** `npm install`, then `npm run build` followed by `npm run preview` to inspect the compiled bundle.
+- **Publish to GitHub Pages:** From a clean `main`, run `npm run build -- --base=./`. Checkout (or create) the `gh-pages` branch in a separate worktree/temp clone, copy everything inside `dist/` plus a `.nojekyll` marker to its root (and optional `env/` folder if used), commit with a descriptive message, and `git push origin gh-pages`.
+- **Live demo:** https://ekimroyrp.github.io/260329_ScalarIsosurface/
