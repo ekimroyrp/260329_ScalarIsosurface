@@ -146,9 +146,33 @@ function buildControlPanel(initial) {
 
       <section class="panel-section">
         <div class="panel-section-header">
-          <span class="panel-section-label">Grid</span>
+          <span class="panel-section-label">Boundary</span>
         </div>
         <div class="panel-section-content panel-controls-stack">
+          <label class="control">
+            <div class="control-row">
+              <span>Size X</span>
+              <input type="number" id="size-x-value" class="value-editor" min="0.5" max="10" step="0.01" value="${initial.sizeX.toFixed(2)}" />
+            </div>
+            <input type="range" id="size-x" min="0.5" max="10" step="0.01" value="${initial.sizeX}" />
+          </label>
+
+          <label class="control">
+            <div class="control-row">
+              <span>Size Y</span>
+              <input type="number" id="size-y-value" class="value-editor" min="0.5" max="10" step="0.01" value="${initial.sizeY.toFixed(2)}" />
+            </div>
+            <input type="range" id="size-y" min="0.5" max="10" step="0.01" value="${initial.sizeY}" />
+          </label>
+
+          <label class="control">
+            <div class="control-row">
+              <span>Size Z</span>
+              <input type="number" id="size-z-value" class="value-editor" min="0.5" max="10" step="0.01" value="${initial.sizeZ.toFixed(2)}" />
+            </div>
+            <input type="range" id="size-z" min="0.5" max="10" step="0.01" value="${initial.sizeZ}" />
+          </label>
+
           <label class="control">
             <div class="control-row">
               <span>X Resolution</span>
@@ -446,6 +470,9 @@ function buildControlPanel(initial) {
     simulationTimeline: requireIn(panel, '#simulation-timeline'),
     simulationTimelineValue: requireIn(panel, '#simulation-timeline-value'),
     simulationRate: requireIn(panel, '#simulation-rate'),
+    sizeX: requireIn(panel, '#size-x'),
+    sizeY: requireIn(panel, '#size-y'),
+    sizeZ: requireIn(panel, '#size-z'),
     xRes: requireIn(panel, '#x-res'),
     yRes: requireIn(panel, '#y-res'),
     zRes: requireIn(panel, '#z-res'),
@@ -461,6 +488,9 @@ function buildControlPanel(initial) {
     randomPoints: requireIn(panel, '#random-points'),
     randomSeed: requireIn(panel, '#random-seed'),
     showPoints: requireIn(panel, '#show-points'),
+    sizeXValue: requireIn(panel, '#size-x-value'),
+    sizeYValue: requireIn(panel, '#size-y-value'),
+    sizeZValue: requireIn(panel, '#size-z-value'),
     xResValue: requireIn(panel, '#x-res-value'),
     yResValue: requireIn(panel, '#y-res-value'),
     zResValue: requireIn(panel, '#z-res-value'),
@@ -557,16 +587,19 @@ function bindRange(input, valueEl, format, onInput) {
 
 const settings = {
   simulationRate: 1,
+  sizeX: 2,
+  sizeY: 2,
+  sizeZ: 2,
   xRes: 15,
   yRes: 15,
   zRes: 15,
   isoValue: 0.55,
-  amount: 1,
-  offset: 0.08,
+  amount: 4,
+  offset: 0.2,
   subdivision: 1,
   smoothing: 2,
   thickness: 0.015,
-  randomPoints: 0,
+  randomPoints: 6,
   randomSeed: 0,
   gradientStart: '#febee0',
   gradientEnd: '#7af0ff',
@@ -898,18 +931,17 @@ keyLightB.position.set(-3.0, 1.7, 2.8);
 scene.add(keyLightB);
 
 const bounds = {
-  min: new THREE.Vector3(-1, -1, -1),
-  max: new THREE.Vector3(1, 1, 1),
+  min: new THREE.Vector3(),
+  max: new THREE.Vector3(),
 };
-const boxCenter = new THREE.Vector3().addVectors(bounds.min, bounds.max).multiplyScalar(0.5);
+const boxCenter = new THREE.Vector3();
 const simulationBoundsScale = 1.25;
 const simulationBounds = {
-  min: bounds.min.clone().sub(boxCenter).multiplyScalar(simulationBoundsScale).add(boxCenter),
-  max: bounds.max.clone().sub(boxCenter).multiplyScalar(simulationBoundsScale).add(boxCenter),
+  min: new THREE.Vector3(),
+  max: new THREE.Vector3(),
 };
 
-const boxSize = new THREE.Vector3().subVectors(bounds.max, bounds.min);
-const boxGeometry = new THREE.BoxGeometry(boxSize.x, boxSize.y, boxSize.z);
+const boxGeometry = new THREE.BoxGeometry(2, 2, 2);
 const boxEdgesThinGeometry = new THREE.EdgesGeometry(boxGeometry);
 const boxEdgesGeometry = new LineSegmentsGeometry();
 boxEdgesGeometry.setPositions(boxEdgesThinGeometry.getAttribute('position').array);
@@ -934,6 +966,26 @@ const raycastBox = new THREE.Mesh(
 );
 scene.add(raycastBox);
 boxGeometry.dispose();
+
+function updateDomainBounds() {
+  const halfX = settings.sizeX * 0.5;
+  const halfY = settings.sizeY * 0.5;
+  const halfZ = settings.sizeZ * 0.5;
+
+  bounds.min.set(-halfX, -halfY, -halfZ);
+  bounds.max.set(halfX, halfY, halfZ);
+  boxCenter.addVectors(bounds.min, bounds.max).multiplyScalar(0.5);
+
+  simulationBounds.min.copy(bounds.min).sub(boxCenter).multiplyScalar(simulationBoundsScale).add(boxCenter);
+  simulationBounds.max.copy(bounds.max).sub(boxCenter).multiplyScalar(simulationBoundsScale).add(boxCenter);
+
+  boxEdges.scale.set(halfX, halfY, halfZ);
+  raycastBox.scale.set(halfX, halfY, halfZ);
+  boxEdges.updateMatrixWorld(true);
+  raycastBox.updateMatrixWorld(true);
+}
+
+updateDomainBounds();
 
 const lightDirA = keyLightA.position.clone().normalize();
 const lightDirB = keyLightB.position.clone().normalize();
@@ -1052,6 +1104,19 @@ function createSeededRandom(seed) {
   };
 }
 
+function clampPointToVolumeBounds(point, targetBounds, padding = 0) {
+  const minX = targetBounds.min.x + padding;
+  const maxX = targetBounds.max.x - padding;
+  const minY = targetBounds.min.y + padding;
+  const maxY = targetBounds.max.y - padding;
+  const minZ = targetBounds.min.z + padding;
+  const maxZ = targetBounds.max.z - padding;
+
+  point.x = THREE.MathUtils.clamp(point.x, minX, maxX);
+  point.y = THREE.MathUtils.clamp(point.y, minY, maxY);
+  point.z = THREE.MathUtils.clamp(point.z, minZ, maxZ);
+}
+
 function regenerateGeneratedPoints() {
   generatedPoints.length = 0;
   generatedPointGroup.clear();
@@ -1086,6 +1151,40 @@ function regenerateGeneratedPoints() {
 function syncPointCount() {
   settings.pointCount = userPoints.length + generatedPoints.length;
   updatePointCountLabel();
+}
+
+function applyGridSizeSettings({ regenerateRandom = true } = {}) {
+  updateDomainBounds();
+
+  for (let i = 0; i < userPoints.length; i += 1) {
+    const point = userPoints[i];
+    clampPointToVolumeBounds(point, bounds, 0);
+    const marker = pointGroup.children[i];
+    if (marker instanceof THREE.Object3D) {
+      marker.position.copy(point);
+    }
+  }
+
+  if (regenerateRandom && settings.randomPoints > 0) {
+    regenerateGeneratedPoints();
+  } else {
+    for (let i = 0; i < generatedPoints.length; i += 1) {
+      const point = generatedPoints[i];
+      clampPointToVolumeBounds(point, bounds, 0);
+      const marker = generatedPointGroup.children[i];
+      if (marker instanceof THREE.Object3D) {
+        marker.position.copy(point);
+      }
+    }
+  }
+
+  if (simulationState.running) {
+    rebuildSimulationEntries();
+    applySimulationAtCurrentElapsed();
+    updateSimulationTimelineUi();
+  } else {
+    invalidateSimulationSession();
+  }
 }
 
 function refreshPointMarkerMaterials() {
@@ -1193,21 +1292,7 @@ function randomUnitVector() {
 }
 
 function clampPointToBounds(point) {
-  point.x = THREE.MathUtils.clamp(
-    point.x,
-    simulationBounds.min.x + simulationBoundsPadding,
-    simulationBounds.max.x - simulationBoundsPadding,
-  );
-  point.y = THREE.MathUtils.clamp(
-    point.y,
-    simulationBounds.min.y + simulationBoundsPadding,
-    simulationBounds.max.y - simulationBoundsPadding,
-  );
-  point.z = THREE.MathUtils.clamp(
-    point.z,
-    simulationBounds.min.z + simulationBoundsPadding,
-    simulationBounds.max.z - simulationBoundsPadding,
-  );
+  clampPointToVolumeBounds(point, simulationBounds, simulationBoundsPadding);
 }
 
 function computeTravelBudget(value, min, max) {
@@ -2034,6 +2119,24 @@ ui.simulationTimeline.addEventListener('input', () => {
   simulationState.elapsed = THREE.MathUtils.clamp(elapsed, 0, simulationState.maxElapsed);
   applySimulationAtCurrentElapsed();
   updateSimulationTimelineUi();
+});
+
+bindRange(ui.sizeX, ui.sizeXValue, (value) => `${value.toFixed(2)}`, (value) => {
+  settings.sizeX = value;
+  applyGridSizeSettings();
+  scheduleRebuild();
+});
+
+bindRange(ui.sizeY, ui.sizeYValue, (value) => `${value.toFixed(2)}`, (value) => {
+  settings.sizeY = value;
+  applyGridSizeSettings();
+  scheduleRebuild();
+});
+
+bindRange(ui.sizeZ, ui.sizeZValue, (value) => `${value.toFixed(2)}`, (value) => {
+  settings.sizeZ = value;
+  applyGridSizeSettings();
+  scheduleRebuild();
 });
 
 bindRange(ui.xRes, ui.xResValue, (value) => `${Math.round(value)}`, (value) => {

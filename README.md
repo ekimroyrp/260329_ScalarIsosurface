@@ -6,6 +6,7 @@
 
 - Interactive isosurface generation from Gaussian point-field contributions.
 - Independent X, Y, and Z grid resolution controls.
+- Independent boundary size controls (`Size X`, `Size Y`, `Size Z`) for resizing the scalar domain box.
 - Adjustable iso value threshold for surface extraction.
 - Multi-surface extraction where `Layers` sets layer count and `Offset` sets equal spacing between layers moving away from points, using a smooth signed-distance projection field.
 - `Thickness` slider for per-layer shell thickness, generating true thickened geometry.
@@ -51,6 +52,6 @@
 - `Right Mouse Drag`: Orbit camera.
 - `Middle Mouse Drag`: Pan camera.
 - `Mouse Wheel`: Zoom.
-- `UI Panel`: Set `X Resolution`, `Y Resolution`, `Z Resolution`, `IsoValue`, `Layers`, `Offset` (equal layer spacing), `Subdivision`, `Smoothing`, `Thickness`, `Gradient Start`, `Gradient End`, `Fresnel`, `Specular`, `Bloom`, and `Delete Custom Points`.
+- `UI Panel`: Set `Size X`, `Size Y`, `Size Z`, `X Resolution`, `Y Resolution`, `Z Resolution`, `IsoValue`, `Layers`, `Offset` (equal layer spacing), `Subdivision`, `Smoothing`, `Thickness`, `Gradient Start`, `Gradient End`, `Fresnel`, `Specular`, `Bloom`, and `Clear Custom Points`.
 - `Numeric Inputs`: Click value fields to type exact numbers; values snap to each control's step and limits.
 - `Export`: Download generated geometry as `OBJ` or `GLB`, or save a `Screenshot`.
