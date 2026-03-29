@@ -110,6 +110,42 @@ function buildControlPanel(initial) {
 
       <section class="panel-section">
         <div class="panel-section-header">
+          <span class="panel-section-label">Simulation</span>
+        </div>
+        <div class="panel-section-content panel-controls-stack">
+          <div class="control control-grid-2">
+            <button type="button" id="start-sim" class="pill-button control-button-wide is-start-state">Simulate</button>
+            <button type="button" id="reset-sim" class="pill-button control-button-wide">Reset</button>
+          </div>
+
+          <label class="control">
+            <div class="control-row">
+              <span>Simulation Timeline</span>
+              <span id="simulation-timeline-value">0.00</span>
+            </div>
+            <input type="range" id="simulation-timeline" min="0" max="1000" step="1" value="0" disabled />
+          </label>
+
+          <label class="control">
+            <div class="control-row">
+              <span>Simulation Rate</span>
+              <input
+                type="number"
+                id="simulation-rate-value"
+                class="value-editor"
+                min="0.1"
+                max="3"
+                step="0.01"
+                value="${initial.simulationRate.toFixed(2)}"
+              />
+            </div>
+            <input type="range" id="simulation-rate" min="0.1" max="3" step="0.01" value="${initial.simulationRate}" />
+          </label>
+        </div>
+      </section>
+
+      <section class="panel-section">
+        <div class="panel-section-header">
           <span class="panel-section-label">Grid</span>
         </div>
         <div class="panel-section-content panel-controls-stack">
@@ -377,6 +413,11 @@ function buildControlPanel(initial) {
     handleBottom: requireIn(panel, '#ui-handle-bottom'),
     collapseToggle: requireIn(panel, '#collapse-toggle'),
     sectionHeaders: Array.from(panel.querySelectorAll('.panel-section-header')),
+    startSim: requireIn(panel, '#start-sim'),
+    resetSim: requireIn(panel, '#reset-sim'),
+    simulationTimeline: requireIn(panel, '#simulation-timeline'),
+    simulationTimelineValue: requireIn(panel, '#simulation-timeline-value'),
+    simulationRate: requireIn(panel, '#simulation-rate'),
     xRes: requireIn(panel, '#x-res'),
     yRes: requireIn(panel, '#y-res'),
     zRes: requireIn(panel, '#z-res'),
@@ -397,6 +438,7 @@ function buildControlPanel(initial) {
     smoothingValue: requireIn(panel, '#smoothing-value'),
     randomPointsValue: requireIn(panel, '#random-points-value'),
     randomSeedValue: requireIn(panel, '#random-seed-value'),
+    simulationRateValue: requireIn(panel, '#simulation-rate-value'),
     pointCountValue: requireIn(panel, '#point-count-value'),
     gradientStart: requireIn(panel, '#gradient-start-color'),
     gradientEnd: requireIn(panel, '#gradient-end-color'),
@@ -481,6 +523,7 @@ function bindRange(input, valueEl, format, onInput) {
 }
 
 const settings = {
+  simulationRate: 1,
   xRes: 15,
   yRes: 15,
   zRes: 15,
@@ -947,6 +990,16 @@ const cutDrawPlane = new THREE.Plane();
 const cutDrawPoint = new THREE.Vector3();
 const cutCameraDirection = new THREE.Vector3();
 
+const simulationState = {
+  running: false,
+  elapsed: 0,
+  lastFrameMs: performance.now(),
+  entries: [],
+};
+const simulationOffset = new THREE.Vector3();
+const simulationPosition = new THREE.Vector3();
+const simulationBoundsPadding = 0.001;
+
 function createSeededRandom(seed) {
   let state = seed >>> 0;
   return () => {
@@ -1050,6 +1103,216 @@ transformControls.addEventListener('objectChange', syncSelectedPointFromMarker);
 
 function updatePointCountLabel() {
   ui.pointCountValue.textContent = String(settings.pointCount);
+}
+
+function setPointEditingLocked(locked) {
+  ui.clearAll.disabled = locked;
+  ui.randomPoints.disabled = locked;
+  ui.randomPointsValue.disabled = locked;
+  ui.randomSeed.disabled = locked;
+  ui.randomSeedValue.disabled = locked;
+}
+
+function updateSimulationButtonState() {
+  if (simulationState.running) {
+    ui.startSim.textContent = 'Stop';
+    ui.startSim.classList.remove('is-start-state');
+    ui.startSim.classList.add('is-stop-state');
+  } else {
+    ui.startSim.textContent = 'Simulate';
+    ui.startSim.classList.remove('is-stop-state');
+    ui.startSim.classList.add('is-start-state');
+  }
+}
+
+function updateSimulationTimelineUi() {
+  const timelineMax = Number.parseInt(ui.simulationTimeline.max, 10);
+  const timelineValue = timelineMax > 0 ? Math.floor((simulationState.elapsed * 60) % (timelineMax + 1)) : 0;
+  ui.simulationTimeline.value = `${timelineValue}`;
+  ui.simulationTimelineValue.textContent = simulationState.elapsed.toFixed(2);
+  updateRangeProgress(ui.simulationTimeline);
+}
+
+function randomUnitVector() {
+  const vector = new THREE.Vector3(Math.random() * 2 - 1, Math.random() * 2 - 1, Math.random() * 2 - 1);
+  if (vector.lengthSq() < 1e-6) {
+    vector.set(1, 0, 0);
+  }
+  return vector.normalize();
+}
+
+function clampPointToBounds(point) {
+  point.x = THREE.MathUtils.clamp(point.x, bounds.min.x + simulationBoundsPadding, bounds.max.x - simulationBoundsPadding);
+  point.y = THREE.MathUtils.clamp(point.y, bounds.min.y + simulationBoundsPadding, bounds.max.y - simulationBoundsPadding);
+  point.z = THREE.MathUtils.clamp(point.z, bounds.min.z + simulationBoundsPadding, bounds.max.z - simulationBoundsPadding);
+}
+
+function computeTravelBudget(value, min, max) {
+  const innerMin = min + simulationBoundsPadding;
+  const innerMax = max - simulationBoundsPadding;
+  return Math.max(0, Math.min(value - innerMin, innerMax - value));
+}
+
+function createSimulationOrbitEntry(pointRef, marker) {
+  const normal = randomUnitVector();
+  let tangentA = randomUnitVector();
+  if (Math.abs(normal.dot(tangentA)) > 0.92) {
+    tangentA = new THREE.Vector3(normal.y, normal.z, normal.x).normalize();
+  }
+  tangentA.addScaledVector(normal, -normal.dot(tangentA)).normalize();
+  const tangentB = new THREE.Vector3().crossVectors(normal, tangentA).normalize();
+
+  const travelBudgetX = computeTravelBudget(pointRef.x, bounds.min.x, bounds.max.x);
+  const travelBudgetY = computeTravelBudget(pointRef.y, bounds.min.y, bounds.max.y);
+  const travelBudgetZ = computeTravelBudget(pointRef.z, bounds.min.z, bounds.max.z);
+  const minTravelBudget = Math.max(0.05, Math.min(travelBudgetX, travelBudgetY, travelBudgetZ));
+
+  const localOrbitScale = THREE.MathUtils.clamp(minTravelBudget * 0.58, 0.06, 0.34);
+  const radiusA = localOrbitScale * (0.75 + Math.random() * 0.7);
+  const radiusB = localOrbitScale * (0.75 + Math.random() * 0.7);
+  const freqA = 0.8 + Math.random() * 1.35;
+  const freqB = 0.7 + Math.random() * 1.2;
+  const phaseA = Math.random() * Math.PI * 2;
+  const phaseB = Math.random() * Math.PI * 2;
+
+  const driftAmplitude = new THREE.Vector3(
+    travelBudgetX > 0.02 ? travelBudgetX * (0.72 + Math.random() * 0.42) : 0,
+    travelBudgetY > 0.02 ? travelBudgetY * (0.72 + Math.random() * 0.42) : 0,
+    travelBudgetZ > 0.02 ? travelBudgetZ * (0.72 + Math.random() * 0.42) : 0,
+  );
+  const driftFrequency = new THREE.Vector3(
+    0.13 + Math.random() * 0.35,
+    0.12 + Math.random() * 0.38,
+    0.11 + Math.random() * 0.34,
+  );
+  const driftPhase = new THREE.Vector3(
+    Math.random() * Math.PI * 2,
+    Math.random() * Math.PI * 2,
+    Math.random() * Math.PI * 2,
+  );
+
+  const initialLocalA = Math.sin(phaseA) * radiusA;
+  const initialLocalB = Math.sin(phaseB) * radiusB;
+  const initialDrift = new THREE.Vector3(
+    Math.sin(driftPhase.x) * driftAmplitude.x,
+    Math.sin(driftPhase.y) * driftAmplitude.y,
+    Math.sin(driftPhase.z) * driftAmplitude.z,
+  );
+
+  return {
+    pointRef,
+    marker,
+    basePosition: pointRef.clone(),
+    axisA: tangentA,
+    axisB: tangentB,
+    radiusA,
+    radiusB,
+    freqA,
+    freqB,
+    phaseA,
+    phaseB,
+    initialLocalA,
+    initialLocalB,
+    driftAmplitude,
+    driftFrequency,
+    driftPhase,
+    initialDrift,
+  };
+}
+
+function rebuildSimulationEntries() {
+  simulationState.entries = [];
+
+  for (let i = 0; i < userPoints.length; i += 1) {
+    const marker = pointGroup.children[i] instanceof THREE.Object3D ? pointGroup.children[i] : null;
+    simulationState.entries.push(createSimulationOrbitEntry(userPoints[i], marker));
+  }
+
+  for (let i = 0; i < generatedPoints.length; i += 1) {
+    const marker = generatedPointGroup.children[i] instanceof THREE.Object3D ? generatedPointGroup.children[i] : null;
+    simulationState.entries.push(createSimulationOrbitEntry(generatedPoints[i], marker));
+  }
+}
+
+function resetSimulationToBasePositions() {
+  for (let i = 0; i < simulationState.entries.length; i += 1) {
+    const entry = simulationState.entries[i];
+    entry.pointRef.copy(entry.basePosition);
+    if (entry.marker instanceof THREE.Object3D) {
+      entry.marker.position.copy(entry.basePosition);
+    }
+  }
+  realtimeRebuildRequested = true;
+}
+
+function setSimulationRunning(nextRunning) {
+  if (simulationState.running === nextRunning) {
+    return;
+  }
+
+  simulationState.running = nextRunning;
+  simulationState.lastFrameMs = performance.now();
+
+  if (nextRunning) {
+    clearPointSelection();
+    transformControls.enabled = false;
+    rebuildSimulationEntries();
+    simulationState.elapsed = 0;
+    updateSimulationTimelineUi();
+  } else {
+    transformControls.enabled = true;
+  }
+
+  setPointEditingLocked(nextRunning);
+  updateSimulationButtonState();
+}
+
+function stepSimulation(deltaSeconds) {
+  if (!simulationState.running) {
+    return;
+  }
+
+  const scaledDelta = Math.max(0, deltaSeconds) * settings.simulationRate;
+  if (scaledDelta <= 0) {
+    return;
+  }
+
+  simulationState.elapsed += scaledDelta;
+  if (simulationState.entries.length === 0) {
+    updateSimulationTimelineUi();
+    return;
+  }
+
+  for (let i = 0; i < simulationState.entries.length; i += 1) {
+    const entry = simulationState.entries[i];
+    const offsetA =
+      Math.sin(simulationState.elapsed * entry.freqA + entry.phaseA) * entry.radiusA - entry.initialLocalA;
+    const offsetB =
+      Math.sin(simulationState.elapsed * entry.freqB + entry.phaseB) * entry.radiusB - entry.initialLocalB;
+
+    simulationOffset.copy(entry.axisA).multiplyScalar(offsetA);
+    simulationOffset.addScaledVector(entry.axisB, offsetB);
+
+    simulationPosition.copy(entry.basePosition).add(simulationOffset);
+    simulationPosition.x +=
+      Math.sin(simulationState.elapsed * entry.driftFrequency.x + entry.driftPhase.x) * entry.driftAmplitude.x -
+      entry.initialDrift.x;
+    simulationPosition.y +=
+      Math.sin(simulationState.elapsed * entry.driftFrequency.y + entry.driftPhase.y) * entry.driftAmplitude.y -
+      entry.initialDrift.y;
+    simulationPosition.z +=
+      Math.sin(simulationState.elapsed * entry.driftFrequency.z + entry.driftPhase.z) * entry.driftAmplitude.z -
+      entry.initialDrift.z;
+    clampPointToBounds(simulationPosition);
+
+    entry.pointRef.copy(simulationPosition);
+    if (entry.marker instanceof THREE.Object3D) {
+      entry.marker.position.copy(simulationPosition);
+    }
+  }
+
+  updateSimulationTimelineUi();
+  realtimeRebuildRequested = true;
 }
 
 function clearIsosurfaceMeshes() {
@@ -1491,6 +1754,10 @@ function exportScreenshot() {
   }, 'image/png');
 }
 
+bindRange(ui.simulationRate, ui.simulationRateValue, (value) => `${value.toFixed(2)}`, (value) => {
+  settings.simulationRate = value;
+});
+
 bindRange(ui.xRes, ui.xResValue, (value) => `${Math.round(value)}`, (value) => {
   settings.xRes = Math.round(value);
   scheduleRebuild();
@@ -1570,7 +1837,25 @@ ui.gradientEnd.addEventListener('input', () => {
   applyMaterialSettingsToMeshes();
 });
 
+ui.startSim.addEventListener('click', () => {
+  setSimulationRunning(!simulationState.running);
+});
+
+ui.resetSim.addEventListener('click', () => {
+  if (simulationState.entries.length === 0) {
+    rebuildSimulationEntries();
+  }
+  simulationState.elapsed = 0;
+  resetSimulationToBasePositions();
+  updateSimulationTimelineUi();
+});
+
 ui.clearAll.addEventListener('click', () => {
+  setSimulationRunning(false);
+  simulationState.entries = [];
+  simulationState.elapsed = 0;
+  updateSimulationTimelineUi();
+
   clearPointSelection();
   userPoints.length = 0;
   generatedPoints.length = 0;
@@ -1843,6 +2128,11 @@ renderer.domElement.addEventListener('pointerdown', (event) => {
     return;
   }
 
+  if (simulationState.running) {
+    pointerDown = null;
+    return;
+  }
+
   if (isTransformDragging || isPointerOverGizmo) {
     pointerDown = null;
     return;
@@ -1911,6 +2201,10 @@ renderer.domElement.addEventListener('pointerleave', (event) => {
 });
 
 window.addEventListener('keydown', (event) => {
+  if (simulationState.running) {
+    return;
+  }
+
   if (event.key !== 'Delete') {
     return;
   }
@@ -1952,6 +2246,14 @@ window.addEventListener('resize', onResize);
 let animationFrame = 0;
 function renderLoop() {
   animationFrame = requestAnimationFrame(renderLoop);
+
+  if (simulationState.running) {
+    const now = performance.now();
+    const deltaSeconds = Math.min((now - simulationState.lastFrameMs) / 1000, 0.05);
+    simulationState.lastFrameMs = now;
+    stepSimulation(deltaSeconds);
+  }
+
   if (realtimeRebuildRequested) {
     realtimeRebuildRequested = false;
     rebuildNow();
@@ -1961,6 +2263,9 @@ function renderLoop() {
 }
 
 syncPointCount();
+updateSimulationButtonState();
+updateSimulationTimelineUi();
+setPointEditingLocked(false);
 renderLoop();
 rebuildIsosurfaces();
 clampPanelToViewport();
