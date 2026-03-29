@@ -107,13 +107,13 @@ function buildControlPanel(initial) {
 
       <section class="panel-section">
         <div class="panel-section-header">
-          <span class="panel-section-label">Grid Density</span>
+          <span class="panel-section-label">Grid</span>
         </div>
         <div class="panel-section-content panel-controls-stack">
           <label class="control">
             <div class="control-row">
               <span>X res</span>
-              <span id="x-res-value">${initial.xRes}</span>
+              <input type="number" id="x-res-value" class="value-editor" min="8" max="48" step="1" value="${initial.xRes}" />
             </div>
             <input type="range" id="x-res" min="8" max="48" step="1" value="${initial.xRes}" />
           </label>
@@ -121,7 +121,7 @@ function buildControlPanel(initial) {
           <label class="control">
             <div class="control-row">
               <span>Y res</span>
-              <span id="y-res-value">${initial.yRes}</span>
+              <input type="number" id="y-res-value" class="value-editor" min="8" max="48" step="1" value="${initial.yRes}" />
             </div>
             <input type="range" id="y-res" min="8" max="48" step="1" value="${initial.yRes}" />
           </label>
@@ -129,7 +129,7 @@ function buildControlPanel(initial) {
           <label class="control">
             <div class="control-row">
               <span>Z res</span>
-              <span id="z-res-value">${initial.zRes}</span>
+              <input type="number" id="z-res-value" class="value-editor" min="8" max="48" step="1" value="${initial.zRes}" />
             </div>
             <input type="range" id="z-res" min="8" max="48" step="1" value="${initial.zRes}" />
           </label>
@@ -138,21 +138,29 @@ function buildControlPanel(initial) {
 
       <section class="panel-section">
         <div class="panel-section-header">
-          <span class="panel-section-label">Surface</span>
+          <span class="panel-section-label">IsoSurface</span>
         </div>
         <div class="panel-section-content panel-controls-stack">
           <label class="control">
             <div class="control-row">
               <span>IsoValue</span>
-              <span id="iso-value-value">${initial.isoValue.toFixed(2)}</span>
+              <input
+                type="number"
+                id="iso-value-value"
+                class="value-editor"
+                min="0.05"
+                max="3.0"
+                step="0.01"
+                value="${initial.isoValue.toFixed(2)}"
+              />
             </div>
             <input type="range" id="iso-value" min="0.05" max="3.0" step="0.01" value="${initial.isoValue}" />
           </label>
 
           <label class="control">
             <div class="control-row">
-              <span>Amount</span>
-              <span id="amount-value">${initial.amount}</span>
+              <span>Layers</span>
+              <input type="number" id="amount-value" class="value-editor" min="1" max="20" step="1" value="${initial.amount}" />
             </div>
             <input type="range" id="amount" min="1" max="20" step="1" value="${initial.amount}" />
           </label>
@@ -160,7 +168,15 @@ function buildControlPanel(initial) {
           <label class="control">
             <div class="control-row">
               <span>Offset</span>
-              <span id="offset-value">${initial.offset.toFixed(2)}</span>
+              <input
+                type="number"
+                id="offset-value"
+                class="value-editor"
+                min="0"
+                max="1"
+                step="0.01"
+                value="${initial.offset.toFixed(2)}"
+              />
             </div>
             <input type="range" id="offset" min="0" max="1" step="0.01" value="${initial.offset}" />
           </label>
@@ -168,7 +184,15 @@ function buildControlPanel(initial) {
           <label class="control">
             <div class="control-row">
               <span>Subdivision</span>
-              <span id="subdivision-value">${initial.subdivision}</span>
+              <input
+                type="number"
+                id="subdivision-value"
+                class="value-editor"
+                min="0"
+                max="3"
+                step="1"
+                value="${initial.subdivision}"
+              />
             </div>
             <input type="range" id="subdivision" min="0" max="3" step="1" value="${initial.subdivision}" />
           </label>
@@ -176,7 +200,15 @@ function buildControlPanel(initial) {
           <label class="control">
             <div class="control-row">
               <span>Smoothing</span>
-              <span id="smoothing-value">${initial.smoothing}</span>
+              <input
+                type="number"
+                id="smoothing-value"
+                class="value-editor"
+                min="0"
+                max="3"
+                step="1"
+                value="${initial.smoothing}"
+              />
             </div>
             <input type="range" id="smoothing" min="0" max="3" step="1" value="${initial.smoothing}" />
           </label>
@@ -221,7 +253,15 @@ function buildControlPanel(initial) {
           <label class="control">
             <div class="control-row">
               <span>Fresnel</span>
-              <span id="fresnel-value">${initial.fresnel.toFixed(2)}</span>
+              <input
+                type="number"
+                id="fresnel-value"
+                class="value-editor"
+                min="0"
+                max="2"
+                step="0.01"
+                value="${initial.fresnel.toFixed(2)}"
+              />
             </div>
             <input type="range" id="fresnel" min="0" max="2" step="0.01" value="${initial.fresnel}" />
           </label>
@@ -229,7 +269,15 @@ function buildControlPanel(initial) {
           <label class="control">
             <div class="control-row">
               <span>Specular</span>
-              <span id="specular-value">${initial.specular.toFixed(2)}</span>
+              <input
+                type="number"
+                id="specular-value"
+                class="value-editor"
+                min="0"
+                max="2"
+                step="0.01"
+                value="${initial.specular.toFixed(2)}"
+              />
             </div>
             <input type="range" id="specular" min="0" max="2" step="0.01" value="${initial.specular}" />
           </label>
@@ -237,7 +285,15 @@ function buildControlPanel(initial) {
           <label class="control">
             <div class="control-row">
               <span>Bloom</span>
-              <span id="bloom-value">${initial.bloom.toFixed(2)}</span>
+              <input
+                type="number"
+                id="bloom-value"
+                class="value-editor"
+                min="0"
+                max="2"
+                step="0.01"
+                value="${initial.bloom.toFixed(2)}"
+              />
             </div>
             <input type="range" id="bloom" min="0" max="2" step="0.01" value="${initial.bloom}" />
           </label>
@@ -314,16 +370,61 @@ function updateRangeProgress(range) {
   range.style.setProperty('--range-progress', `${progress}%`);
 }
 
+function clampAndSnapRangeValue(value, rangeInput) {
+  const min = Number.parseFloat(rangeInput.min);
+  const max = Number.parseFloat(rangeInput.max);
+  const step = Number.parseFloat(rangeInput.step);
+  let next = value;
+
+  if (Number.isFinite(min)) {
+    next = Math.max(min, next);
+  }
+  if (Number.isFinite(max)) {
+    next = Math.min(max, next);
+  }
+  if (Number.isFinite(step) && step > 0) {
+    const base = Number.isFinite(min) ? min : 0;
+    next = base + Math.round((next - base) / step) * step;
+  }
+  if (Number.isFinite(min)) {
+    next = Math.max(min, next);
+  }
+  if (Number.isFinite(max)) {
+    next = Math.min(max, next);
+  }
+
+  return next;
+}
+
 function bindRange(input, valueEl, format, onInput) {
-  const apply = () => {
+  const applyFromSlider = () => {
     const value = Number.parseFloat(input.value);
-    valueEl.textContent = format(value);
+    valueEl.value = format(value);
     updateRangeProgress(input);
     onInput(value);
   };
 
-  input.addEventListener('input', apply);
-  apply();
+  const commitFromField = () => {
+    const parsed = Number.parseFloat(valueEl.value);
+    if (!Number.isFinite(parsed)) {
+      valueEl.value = format(Number.parseFloat(input.value));
+      return;
+    }
+
+    const next = clampAndSnapRangeValue(parsed, input);
+    input.value = `${next}`;
+    applyFromSlider();
+  };
+
+  input.addEventListener('input', applyFromSlider);
+  valueEl.addEventListener('change', commitFromField);
+  valueEl.addEventListener('blur', commitFromField);
+  valueEl.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      valueEl.blur();
+    }
+  });
+  applyFromSlider();
 }
 
 const settings = {

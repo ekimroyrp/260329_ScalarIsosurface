@@ -326,6 +326,8 @@ canvas {
   font-weight: 560;
   color: var(--text-primary);
   outline: none;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .value-editor::-webkit-outer-spin-button,

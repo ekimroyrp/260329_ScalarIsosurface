@@ -7,11 +7,12 @@
 - Interactive isosurface generation from Gaussian point-field contributions.
 - Independent X, Y, and Z grid resolution controls.
 - Adjustable iso value threshold for surface extraction.
-- Multi-surface extraction where `Amount` sets layer count and `offset` sets equal spacing between layers moving away from points, using a smooth signed-distance projection field.
+- Multi-surface extraction where `Layers` sets layer count and `Offset` sets equal spacing between layers moving away from points, using a smooth signed-distance projection field.
 - Catmull-Clark subdivision smoothing with an integer `Subdivision` level control.
 - Volumetric `Smoothing` control that filters the signed-distance field before meshing, preserving target layer levels while reducing noisy artifacts.
 - DifferentialGrowth-inspired visual style with dark atmospheric environment, custom shader shading, bloom, and glassmorphism panel UI.
 - Material panel controls for layer gradient (`Gradient Start` to `Gradient End`), Fresnel, Specular, and Bloom.
+- Slider values are directly editable via inline numeric fields (no spinner arrows), with min/max/step clamping.
 - Export tools for `OBJ`, `GLB`, and `Screenshot` output.
 - Left-click point placement on the box surface.
 - Click an existing point to select it and move it with a translate gizmo.
@@ -40,5 +41,6 @@
 - `Right Mouse Drag`: Orbit camera.
 - `Middle Mouse Drag`: Pan camera.
 - `Mouse Wheel`: Zoom.
-- `UI Panel`: Set `X res`, `Y res`, `Z res`, `IsoValue`, `Amount`, `Offset` (equal layer spacing), `Subdivision`, `Smoothing`, `Gradient Start`, `Gradient End`, `Fresnel`, `Specular`, `Bloom`, and `Clear All` points.
+- `UI Panel`: Set `X res`, `Y res`, `Z res`, `IsoValue`, `Layers`, `Offset` (equal layer spacing), `Subdivision`, `Smoothing`, `Gradient Start`, `Gradient End`, `Fresnel`, `Specular`, `Bloom`, and `Clear All` points.
+- `Numeric Inputs`: Click value fields to type exact numbers; values snap to each control's step and limits.
 - `Export`: Download generated geometry as `OBJ` or `GLB`, or save a `Screenshot`.
