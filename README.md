@@ -9,6 +9,7 @@
 - Adjustable iso value threshold for surface extraction.
 - Multi-surface extraction where `Amount` sets layer count and `offset` sets equal spacing between layers moving away from points, using a smooth signed-distance projection field.
 - Catmull-Clark subdivision smoothing with an integer `Subdivision` level control.
+- DifferentialGrowth-inspired visual style with dark atmospheric environment, custom shader shading, bloom, and glassmorphism panel UI.
 - Left-click point placement on the box surface.
 - Right-drag orbit and middle-drag pan navigation.
 - Live point count and one-click clear operation.
