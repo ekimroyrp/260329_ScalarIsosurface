@@ -565,7 +565,7 @@ const settings = {
   offset: 0.08,
   subdivision: 1,
   smoothing: 2,
-  thickness: 0,
+  thickness: 0.015,
   randomPoints: 0,
   randomSeed: 0,
   gradientStart: '#febee0',
@@ -1554,8 +1554,9 @@ function addThicknessToGeometry(geometry, thickness) {
     const innerA = edge.from + vertexCount;
     const innerB = edge.to + vertexCount;
 
-    thickIndices.push(outerA, outerB, innerB);
-    thickIndices.push(outerA, innerB, innerA);
+    // Boundary quads must face outward; this winding keeps shell normals consistent.
+    thickIndices.push(outerA, innerB, outerB);
+    thickIndices.push(outerA, innerA, innerB);
   }
 
   const thickGeometry = new THREE.BufferGeometry();
@@ -1799,6 +1800,15 @@ function rebuildNow() {
   rebuildIsosurfaces();
 }
 
+function flushPendingIsosurfaceRebuild() {
+  if (rebuildTimer === null && !realtimeRebuildRequested) {
+    return;
+  }
+
+  realtimeRebuildRequested = false;
+  rebuildNow();
+}
+
 function downloadBlob(filename, blob) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
@@ -1822,6 +1832,28 @@ function getMeshBaseColor(mesh) {
   return new THREE.Color(0xffffff);
 }
 
+function ensureColorAttribute(geometry, fallbackColor) {
+  const position = geometry.getAttribute('position');
+  if (!(position instanceof THREE.BufferAttribute)) {
+    return;
+  }
+
+  const existingColor = geometry.getAttribute('color');
+  if (existingColor instanceof THREE.BufferAttribute && existingColor.itemSize === 3 && existingColor.count === position.count) {
+    return;
+  }
+
+  const count = position.count;
+  const colors = new Float32Array(count * 3);
+  for (let i = 0; i < count; i += 1) {
+    const base = i * 3;
+    colors[base] = fallbackColor.r;
+    colors[base + 1] = fallbackColor.g;
+    colors[base + 2] = fallbackColor.b;
+  }
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+}
+
 function buildExportGroup() {
   const group = new THREE.Group();
   const ownedGeometries = [];
@@ -1832,10 +1864,13 @@ function buildExportGroup() {
       continue;
     }
 
+    const baseColor = getMeshBaseColor(child);
     const geometry = child.geometry.clone();
+    ensureColorAttribute(geometry, baseColor);
     geometry.applyMatrix4(child.matrixWorld);
     const material = new THREE.MeshStandardMaterial({
-      color: getMeshBaseColor(child),
+      color: 0xffffff,
+      vertexColors: true,
       roughness: 0.35,
       metalness: 0.1,
       side: THREE.DoubleSide,
@@ -1860,15 +1895,20 @@ function buildExportGroup() {
 }
 
 function exportIsosurfacesAsObj() {
+  flushPendingIsosurfaceRebuild();
   if (isoGroup.children.length === 0) {
     return;
   }
 
-  const lines = ['# Scalar Isosurface OBJ export'];
+  const lines = [
+    '# Scalar Isosurface OBJ export',
+    '# Vertex colors are encoded as: v x y z r g b',
+  ];
   let vertexOffset = 1;
 
   const worldPosition = new THREE.Vector3();
   const worldNormal = new THREE.Vector3();
+  const fallbackColor = new THREE.Color();
   const normalMatrix = new THREE.Matrix3();
 
   for (let meshIndex = 0; meshIndex < isoGroup.children.length; meshIndex += 1) {
@@ -1881,6 +1921,13 @@ function exportIsosurfacesAsObj() {
     if (!(position instanceof THREE.BufferAttribute)) {
       continue;
     }
+
+    const colorAttr = mesh.geometry.getAttribute('color');
+    const hasVertexColor =
+      colorAttr instanceof THREE.BufferAttribute &&
+      colorAttr.itemSize === 3 &&
+      colorAttr.count === position.count;
+    fallbackColor.copy(getMeshBaseColor(mesh));
 
     let normal = mesh.geometry.getAttribute('normal');
     if (!(normal instanceof THREE.BufferAttribute)) {
@@ -1896,7 +1943,12 @@ function exportIsosurfacesAsObj() {
 
     for (let i = 0; i < position.count; i += 1) {
       worldPosition.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld);
-      lines.push(`v ${worldPosition.x.toFixed(6)} ${worldPosition.y.toFixed(6)} ${worldPosition.z.toFixed(6)}`);
+      const r = hasVertexColor ? THREE.MathUtils.clamp(colorAttr.getX(i), 0, 1) : fallbackColor.r;
+      const g = hasVertexColor ? THREE.MathUtils.clamp(colorAttr.getY(i), 0, 1) : fallbackColor.g;
+      const b = hasVertexColor ? THREE.MathUtils.clamp(colorAttr.getZ(i), 0, 1) : fallbackColor.b;
+      lines.push(
+        `v ${worldPosition.x.toFixed(6)} ${worldPosition.y.toFixed(6)} ${worldPosition.z.toFixed(6)} ${r.toFixed(6)} ${g.toFixed(6)} ${b.toFixed(6)}`,
+      );
     }
 
     for (let i = 0; i < normal.count; i += 1) {
@@ -1929,6 +1981,7 @@ function exportIsosurfacesAsObj() {
 
 const gltfExporter = new GLTFExporter();
 function exportIsosurfacesAsGlb() {
+  flushPendingIsosurfaceRebuild();
   if (isoGroup.children.length === 0) {
     return;
   }
