@@ -2411,6 +2411,10 @@ ui.resetSim.addEventListener('click', () => {
 });
 
 ui.clearAll.addEventListener('click', () => {
+  if (userPoints.length === 0) {
+    return;
+  }
+
   setSimulationRunning(false);
   simulationState.entries = [];
   simulationState.elapsed = 0;
@@ -2419,16 +2423,7 @@ ui.clearAll.addEventListener('click', () => {
 
   clearPointSelection();
   userPoints.length = 0;
-  generatedPoints.length = 0;
   pointGroup.clear();
-  generatedPointGroup.clear();
-  activeCutPlanes.length = 0;
-  cutGesture = null;
-  cutLine.visible = false;
-  settings.randomPoints = 0;
-  ui.randomPoints.value = '0';
-  ui.randomPointsValue.value = '0';
-  updateRangeProgress(ui.randomPoints);
   syncPointCount();
   scheduleRebuild();
   pushUndoState();
